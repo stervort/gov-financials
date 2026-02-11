@@ -1,0 +1,36 @@
+from pydantic import BaseModel
+from typing import List, Optional
+
+class EngagementCreate(BaseModel):
+    name: str
+    fiscal_year: str
+
+class EngagementOut(BaseModel):
+    id: int
+    name: str
+    fiscal_year: str
+
+class MappingRuleIn(BaseModel):
+    source_level: str
+    source_key: str
+    target_statement: str
+    target_line_code: str
+    split_pct: float = 1.0
+
+class ConversionLineIn(BaseModel):
+    target_statement: str
+    target_line_code: str
+    column: str = "GovActivities"
+    amount: float
+
+class ConversionEntryIn(BaseModel):
+    memo: str = ""
+    category: str = "General"
+    lines: List[ConversionLineIn]
+
+class NarrativeIn(BaseModel):
+    section: str
+    content: str
+
+class ResolveRequest(BaseModel):
+    content: str

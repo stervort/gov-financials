@@ -1,0 +1,56 @@
+"use client";
+import { useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
+import { apiGet, apiPost } from "../api";
+
+export default function NarrativePage() {
+  const sp = useSearchParams();
+  const e = sp.get("e");
+  const [content, setContent] = useState(
+`MD&A sample:
+Cash is {{FS.GF_BS.Cash}}.
+Assets total (from TB group) is {{TB.group("Assets")}}.
+Capital assets, net (GW) is {{FS.GW_SNP.CapitalAssetsNet}}.`
+  );
+  const [resolved, setResolved] = useState("");
+  const [deps, setDeps] = useState<any[]>([]);
+
+  useEffect(() => {
+    (async () => {
+      if (!e) return;
+      const n = await apiGet(`/api/engagements/${e}/narrative/MDA`);
+      if (n.content) setContent(n.content);
+    })();
+  }, [e]);
+
+  async function save() {
+    if (!e) return;
+    await apiPost(`/api/engagements/${e}/narrative`, { section: "MDA", content });
+  }
+
+  async function preview() {
+    if (!e) return;
+    const r = await apiPost(`/api/engagements/${e}/narrative/resolve`, { content });
+    setResolved(r.resolved);
+    setDeps(r.dependencies);
+  }
+
+  return (
+    <main style={{ padding: 20, fontFamily: "system-ui" }}>
+      <h1>MD&A Narrative</h1>
+      <p>Use tokens like: {{`{{FS.GF_BS.Cash}}`}} or {{`{{TB.group("Assets")}}`}}</p>
+
+      <textarea value={content} onChange={(ev)=>setContent(ev.target.value)} rows={10} style={{ width: 800 }} />
+      <div style={{ marginTop: 8 }}>
+        <button onClick={save}>Save</button>{" "}
+        <button onClick={preview}>Preview Resolve</button>
+      </div>
+
+      <h3 style={{ marginTop: 16 }}>Resolved Text</h3>
+      <pre style={{ background:"#f6f6f6", padding:12 }}>{resolved}</pre>
+
+      <h3>Dependencies</h3>
+      <pre style={{ background:"#f6f6f6", padding:12 }}>{JSON.stringify(deps, null, 2)}</pre>
+    </main>
+  );
+}

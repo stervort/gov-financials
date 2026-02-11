@@ -1,0 +1,73 @@
+from sqlalchemy import String, Integer, Float, DateTime, ForeignKey, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+from datetime import datetime
+from .db import Base
+
+class Engagement(Base):
+    __tablename__ = "engagements"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+    fiscal_year: Mapped[str] = mapped_column(String(10))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    tb_rows = relationship("TBRow", back_populates="engagement", cascade="all, delete-orphan")
+    mappings = relationship("MappingRule", back_populates="engagement", cascade="all, delete-orphan")
+    conversions = relationship("ConversionEntry", back_populates="engagement", cascade="all, delete-orphan")
+    narratives = relationship("NarrativeBlock", back_populates="engagement", cascade="all, delete-orphan")
+
+class TBRow(Base):
+    __tablename__ = "tb_rows"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    engagement_id: Mapped[int] = mapped_column(ForeignKey("engagements.id"))
+    account: Mapped[str] = mapped_column(String(50))
+    description: Mapped[str] = mapped_column(String(300))
+    balance: Mapped[float] = mapped_column(Float)
+    type: Mapped[str] = mapped_column(String(50))
+    group: Mapped[str] = mapped_column(String(200))
+    subgroup: Mapped[str] = mapped_column(String(200), default="")
+    subsubgroup: Mapped[str] = mapped_column(String(200), default="")
+
+    engagement = relationship("Engagement", back_populates="tb_rows")
+
+class MappingRule(Base):
+    __tablename__ = "mapping_rules"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    engagement_id: Mapped[int] = mapped_column(ForeignKey("engagements.id"))
+    source_level: Mapped[str] = mapped_column(String(20))  # group|subgroup|subsubgroup|account
+    source_key: Mapped[str] = mapped_column(String(300))
+    target_statement: Mapped[str] = mapped_column(String(50))  # e.g., GF_BS, GF_IS, GW_SNP, GW_SOA
+    target_line_code: Mapped[str] = mapped_column(String(100))
+    split_pct: Mapped[float] = mapped_column(Float, default=1.0)
+
+    engagement = relationship("Engagement", back_populates="mappings")
+
+class ConversionEntry(Base):
+    __tablename__ = "conversion_entries"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    engagement_id: Mapped[int] = mapped_column(ForeignKey("engagements.id"))
+    memo: Mapped[str] = mapped_column(String(500), default="")
+    category: Mapped[str] = mapped_column(String(100), default="General")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    lines = relationship("ConversionLine", back_populates="entry", cascade="all, delete-orphan")
+    engagement = relationship("Engagement", back_populates="conversions")
+
+class ConversionLine(Base):
+    __tablename__ = "conversion_lines"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    entry_id: Mapped[int] = mapped_column(ForeignKey("conversion_entries.id"))
+    target_statement: Mapped[str] = mapped_column(String(50))  # GW_SNP or GW_SOA
+    target_line_code: Mapped[str] = mapped_column(String(100))
+    column: Mapped[str] = mapped_column(String(50), default="GovActivities")
+    amount: Mapped[float] = mapped_column(Float)  # signed
+
+    entry = relationship("ConversionEntry", back_populates="lines")
+
+class NarrativeBlock(Base):
+    __tablename__ = "narratives"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    engagement_id: Mapped[int] = mapped_column(ForeignKey("engagements.id"))
+    section: Mapped[str] = mapped_column(String(100))  # MDA, Note1, etc.
+    content: Mapped[str] = mapped_column(Text, default="")
+
+    engagement = relationship("Engagement", back_populates="narratives")

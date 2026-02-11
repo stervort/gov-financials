@@ -1,0 +1,32 @@
+# Minimal starter template: expand to full Larson/Utah style later
+STATEMENT_LINES = {
+    "GF_BS": [
+        ("Cash", "Cash and cash equivalents"),
+        ("Receivables", "Receivables"),
+        ("AccountsPayable", "Accounts payable"),
+        ("DueToOtherFunds", "Due to other funds"),
+        ("FundBalance", "Fund balance"),
+    ],
+    "GF_IS": [
+        ("Taxes", "Tax revenues"),
+        ("Charges", "Charges for services"),
+        ("GenGovExp", "General government expenditures"),
+        ("PublicSafetyExp", "Public safety expenditures"),
+    ],
+    "GW_SNP": [
+        ("Cash", "Cash and cash equivalents"),
+        ("Receivables", "Receivables"),
+        ("CapitalAssetsNet", "Capital assets, net"),
+        ("AccountsPayable", "Accounts payable"),
+        ("LongTermDebt", "Long-term debt"),
+        ("NetPosition", "Net position"),
+    ],
+    "GW_SOA": [
+        ("Charges", "Charges for services"),
+        ("OperatingGrants", "Operating grants and contributions"),
+        ("GeneralRevenues", "General revenues"),
+        ("GenGovExp", "General government"),
+        ("PublicSafetyExp", "Public safety"),
+        ("ChangeInNetPosition", "Change in net position"),
+    ],
+}

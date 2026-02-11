@@ -1,0 +1,44 @@
+"use client";
+import { useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
+import { apiGet } from "../api";
+
+export default function StatementsPage() {
+  const sp = useSearchParams();
+  const e = sp.get("e");
+  const [stmt, setStmt] = useState("GF_BS");
+  const [data, setData] = useState<any>(null);
+
+  useEffect(() => {
+    (async () => {
+      if (!e) return;
+      setData(await apiGet(`/api/engagements/${e}/statements/${stmt}`));
+    })();
+  }, [e, stmt]);
+
+  return (
+    <main style={{ padding: 20, fontFamily: "system-ui" }}>
+      <h1>Statements</h1>
+      <select value={stmt} onChange={(ev)=>setStmt(ev.target.value)}>
+        <option value="GF_BS">GF_BS</option>
+        <option value="GF_IS">GF_IS</option>
+        <option value="GW_SNP">GW_SNP (with conversions)</option>
+        <option value="GW_SOA">GW_SOA (with conversions)</option>
+      </select>
+
+      <table style={{ marginTop: 16, borderCollapse: "collapse", width: 520 }}>
+        <thead>
+          <tr><th style={{textAlign:"left", borderBottom:"1px solid #ccc"}}>Line</th><th style={{textAlign:"right", borderBottom:"1px solid #ccc"}}>Amount</th></tr>
+        </thead>
+        <tbody>
+          {(data?.lines || []).map((r:any)=>(
+            <tr key={r.line_code}>
+              <td style={{ padding: "6px 0" }}>{r.label}</td>
+              <td style={{ textAlign:"right" }}>{Number(r.amount).toLocaleString(undefined,{maximumFractionDigits:0})}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </main>
+  );
+}

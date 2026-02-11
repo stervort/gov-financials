@@ -1,0 +1,31 @@
+"use client";
+import { useSearchParams } from "next/navigation";
+import { useState } from "react";
+import { apiUpload } from "../api";
+
+export default function UploadPage() {
+  const sp = useSearchParams();
+  const e = sp.get("e");
+  const [file, setFile] = useState<File | null>(null);
+  const [msg, setMsg] = useState("");
+
+  async function upload() {
+    if (!e) return setMsg("Missing engagement id");
+    if (!file) return setMsg("Choose a file");
+    const res = await apiUpload(`/api/engagements/${e}/tb/upload`, file);
+    setMsg(JSON.stringify(res, null, 2));
+  }
+
+  return (
+    <main style={{ padding: 20, fontFamily: "system-ui" }}>
+      <h1>Upload Trial Balance</h1>
+      <p>Engagement ID: {e}</p>
+      <input type="file" accept=".csv" onChange={(ev)=>setFile(ev.target.files?.[0] || null)} />
+      <button onClick={upload} style={{ marginLeft: 8 }}>Upload</button>
+      <pre style={{ marginTop: 16, background: "#f6f6f6", padding: 12 }}>{msg}</pre>
+      <p style={{ marginTop: 16 }}>
+        Required columns: account, description, balance, type, group, subgroup, subsubgroup
+      </p>
+    </main>
+  );
+}

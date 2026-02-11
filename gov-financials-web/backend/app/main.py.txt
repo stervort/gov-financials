@@ -1,0 +1,145 @@
+import os
+from fastapi import FastAPI, Depends, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
+
+from .db import Base, engine, get_db
+from .models import Engagement, TBRow, MappingRule, ConversionEntry, ConversionLine, NarrativeBlock
+from .schemas import (
+    EngagementCreate, EngagementOut, MappingRuleIn,
+    ConversionEntryIn, NarrativeIn, ResolveRequest
+)
+from .services import parse_tb_csv, generate_statement, apply_conversions, resolve_tokens
+from .templates import STATEMENT_LINES
+
+Base.metadata.create_all(bind=engine)
+
+app = FastAPI(title="Gov Financials Web MVP")
+
+origins = os.environ.get("CORS_ORIGINS", "http://localhost:3000").split(",")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in origins],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.post("/api/engagements", response_model=EngagementOut)
+def create_engagement(payload: EngagementCreate, db: Session = Depends(get_db)):
+    e = Engagement(name=payload.name, fiscal_year=payload.fiscal_year)
+    db.add(e); db.commit(); db.refresh(e)
+    return EngagementOut(id=e.id, name=e.name, fiscal_year=e.fiscal_year)
+
+@app.get("/api/engagements", response_model=list[EngagementOut])
+def list_engagements(db: Session = Depends(get_db)):
+    out = []
+    for e in db.query(Engagement).order_by(Engagement.created_at.desc()).all():
+        out.append(EngagementOut(id=e.id, name=e.name, fiscal_year=e.fiscal_year))
+    return out
+
+@app.post("/api/engagements/{engagement_id}/tb/upload")
+async def upload_tb(engagement_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    content = await file.read()
+    df = parse_tb_csv(content)
+
+    # replace existing TB for simplicity
+    db.query(TBRow).filter(TBRow.engagement_id == engagement_id).delete()
+    db.commit()
+
+    rows = []
+    for _, r in df.iterrows():
+        rows.append(TBRow(
+            engagement_id=engagement_id,
+            account=r["account"],
+            description=r["description"],
+            balance=float(r["balance"]),
+            type=r["type"],
+            group=r["group"],
+            subgroup=r.get("subgroup",""),
+            subsubgroup=r.get("subsubgroup",""),
+        ))
+    db.add_all(rows); db.commit()
+
+    total = float(df["balance"].sum())
+    return {"rows_imported": len(rows), "balance_total_should_be_0": total}
+
+@app.get("/api/engagements/{engagement_id}/tb")
+def get_tb(engagement_id: int, db: Session = Depends(get_db)):
+    tb = db.query(TBRow).filter(TBRow.engagement_id == engagement_id).all()
+    return [{"account":t.account,"description":t.description,"balance":t.balance,"type":t.type,
+             "group":t.group,"subgroup":t.subgroup,"subsubgroup":t.subsubgroup} for t in tb]
+
+@app.get("/api/templates/statement-lines")
+def get_statement_lines():
+    return STATEMENT_LINES
+
+@app.get("/api/engagements/{engagement_id}/mapping")
+def get_mapping(engagement_id: int, db: Session = Depends(get_db)):
+    ms = db.query(MappingRule).filter(MappingRule.engagement_id == engagement_id).all()
+    return [{"id":m.id,"source_level":m.source_level,"source_key":m.source_key,
+             "target_statement":m.target_statement,"target_line_code":m.target_line_code,
+             "split_pct":m.split_pct} for m in ms]
+
+@app.post("/api/engagements/{engagement_id}/mapping")
+def upsert_mapping(engagement_id: int, rules: list[MappingRuleIn], db: Session = Depends(get_db)):
+    db.query(MappingRule).filter(MappingRule.engagement_id == engagement_id).delete()
+    db.commit()
+    ms = [MappingRule(engagement_id=engagement_id, **r.model_dump()) for r in rules]
+    db.add_all(ms); db.commit()
+    return {"saved": len(ms)}
+
+@app.get("/api/engagements/{engagement_id}/statements/{statement_code}")
+def get_statement(engagement_id: int, statement_code: str, db: Session = Depends(get_db)):
+    base = generate_statement(db, engagement_id, statement_code)
+    if statement_code.startswith("GW_"):
+        base = apply_conversions(db, engagement_id, statement_code, base)
+    return {"statement": statement_code, "lines": base}
+
+@app.post("/api/engagements/{engagement_id}/conversions")
+def add_conversion(engagement_id: int, payload: ConversionEntryIn, db: Session = Depends(get_db)):
+    e = ConversionEntry(engagement_id=engagement_id, memo=payload.memo, category=payload.category)
+    db.add(e); db.commit(); db.refresh(e)
+
+    lines = []
+    for ln in payload.lines:
+        lines.append(ConversionLine(entry_id=e.id, **ln.model_dump()))
+    db.add_all(lines); db.commit()
+    return {"entry_id": e.id, "lines_added": len(lines)}
+
+@app.get("/api/engagements/{engagement_id}/conversions")
+def list_conversions(engagement_id: int, db: Session = Depends(get_db)):
+    entries = db.query(ConversionEntry).filter(ConversionEntry.engagement_id == engagement_id).all()
+    out = []
+    for e in entries:
+        out.append({
+            "id": e.id,
+            "memo": e.memo,
+            "category": e.category,
+            "lines": [{"target_statement":l.target_statement,"target_line_code":l.target_line_code,"column":l.column,"amount":l.amount} for l in e.lines]
+        })
+    return out
+
+@app.post("/api/engagements/{engagement_id}/narrative")
+def save_narrative(engagement_id: int, payload: NarrativeIn, db: Session = Depends(get_db)):
+    # one block per section for MVP
+    db.query(NarrativeBlock).filter(
+        NarrativeBlock.engagement_id == engagement_id,
+        NarrativeBlock.section == payload.section
+    ).delete()
+    db.commit()
+    n = NarrativeBlock(engagement_id=engagement_id, section=payload.section, content=payload.content)
+    db.add(n); db.commit()
+    return {"saved": True}
+
+@app.get("/api/engagements/{engagement_id}/narrative/{section}")
+def get_narrative(engagement_id: int, section: str, db: Session = Depends(get_db)):
+    n = db.query(NarrativeBlock).filter(
+        NarrativeBlock.engagement_id == engagement_id,
+        NarrativeBlock.section == section
+    ).first()
+    return {"section": section, "content": n.content if n else ""}
+
+@app.post("/api/engagements/{engagement_id}/narrative/resolve")
+def resolve_narrative(engagement_id: int, payload: ResolveRequest, db: Session = Depends(get_db)):
+    return resolve_tokens(db, engagement_id, payload.content)
