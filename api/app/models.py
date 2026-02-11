@@ -1,8 +1,15 @@
+# api/app/models.py
+
+from __future__ import annotations
+
+from datetime import datetime
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy import String, Integer, DateTime, Text, ForeignKey, Numeric, func
 
+
 class Base(DeclarativeBase):
     pass
+
 
 class UploadedFile(Base):
     __tablename__ = "uploaded_file"
@@ -10,7 +17,8 @@ class UploadedFile(Base):
     filename: Mapped[str] = mapped_column(String(255))
     content_type: Mapped[str] = mapped_column(String(100), default="text/csv")
     content_text: Mapped[str] = mapped_column(Text)  # store CSV text (OK for MVP)
-    created_at: Mapped = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
 
 class Fund(Base):
     __tablename__ = "fund"
@@ -18,21 +26,24 @@ class Fund(Base):
     fund_code: Mapped[str] = mapped_column(String(50), index=True)
     fund_name: Mapped[str] = mapped_column(String(255), default="")
     fund_type: Mapped[str] = mapped_column(String(50), default="")  # governmental/proprietary/fiduciary
-    created_at: Mapped = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
 
 class Account(Base):
     __tablename__ = "account"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     account_number: Mapped[str] = mapped_column(String(100), index=True)
     account_name: Mapped[str] = mapped_column(String(255), default="")
-    created_at: Mapped = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
 
 class TBImport(Base):
     __tablename__ = "tb_import"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     import_name: Mapped[str] = mapped_column(String(255), default="TB Import")
     uploaded_file_id: Mapped[int] = mapped_column(ForeignKey("uploaded_file.id"))
-    created_at: Mapped = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
 
 class TBLine(Base):
     __tablename__ = "tb_line"
@@ -41,5 +52,5 @@ class TBLine(Base):
     fund_id: Mapped[int] = mapped_column(ForeignKey("fund.id"), index=True)
     account_id: Mapped[int] = mapped_column(ForeignKey("account.id"), index=True)
     description: Mapped[str] = mapped_column(String(255), default="")
-    amount: Mapped[float] = mapped_column(Numeric(18, 2))
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 2))
     source_row: Mapped[int] = mapped_column(Integer)
