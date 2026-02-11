@@ -6,12 +6,17 @@
 
   {% if message %}
     <div class="warn">{{ message }}</div>
+    <br/>
   {% endif %}
 
-  <form action="/b/{{ binder.id }}/tb/upload" method="post" enctype="multipart/form-data">
+  <p><b>Binder:</b> {{ binder_label }}</p>
+
+  <form action="/tb/upload" method="post" enctype="multipart/form-data">
+    <input type="hidden" name="binder_id" value="{{ binder_id }}">
+
     <div class="row">
       <div class="col">
-        <label>Excel file (.xlsx)</label><br>
+        <label><b>Excel file (.xlsx)</b></label><br>
         <input
           type="file"
           name="file"
@@ -22,14 +27,12 @@
     </div>
 
     <br>
-
-    <button class="btn btn-primary" type="submit">
-      Upload & Preview
-    </button>
+    <button class="btn btn-primary" type="submit">Upload & Preview</button>
+    <a class="btn" href="/">Back to Home</a>
   </form>
 
-  <p style="font-size:12px; opacity:.8; margin-top:10px;">
-    This MVP supports Excel only. Exporting to CSV is unnecessary—just upload the .xlsx trial balance.
+  <p class="muted" style="margin-top:10px;">
+    Excel-only MVP. Upload the .xlsx trial balance.
   </p>
 </div>
 {% endblock %}
