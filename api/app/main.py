@@ -27,6 +27,9 @@ from .tb_import import (
     normalize_amount,
 )
 
+# -----------------------
+# App + Templates (MUST be defined before routes)
+# -----------------------
 app = FastAPI()
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
 
@@ -40,8 +43,8 @@ def db_session() -> Session:
 
 def xlsx_bytes_to_csv_text(xlsx_bytes: bytes) -> str:
     """
-    Converts the FIRST sheet of an .xlsx into CSV text for reuse by our CSV pipeline.
-    - Uses data_only=True so formulas show calculated values.
+    Converts the FIRST sheet of an .xlsx into CSV text for reuse by our parsing pipeline.
+    - data_only=True: formulas -> calculated values
     """
     wb = load_workbook(filename=io.BytesIO(xlsx_bytes), data_only=True, read_only=True)
     ws = wb.worksheets[0]
@@ -81,7 +84,6 @@ def health():
 
 @app.get("/", response_class=HTMLResponse)
 def upload_page(request: Request):
-    # upload.html is XLSX-only
     return templates.TemplateResponse("upload.html", {"request": request, "message": None})
 
 
@@ -89,10 +91,7 @@ def upload_page(request: Request):
 # Step 1: Upload & Preview (XLSX ONLY)
 # -----------------------
 @app.post("/tb/upload", response_class=HTMLResponse)
-async def tb_upload(
-    request: Request,
-    file: UploadFile,
-):
+async def tb_upload(request: Request, file: UploadFile):
     raw = await file.read()
     filename = file.filename or "upload.xlsx"
     lower = filename.lower()
@@ -103,10 +102,10 @@ async def tb_upload(
             {"request": request, "message": "Please upload an Excel .xlsx trial balance file."},
         )
 
-    # Convert to CSV-text and reuse the existing pipeline
+    # Convert Excel -> CSV text
     content = xlsx_bytes_to_csv_text(raw)
 
-    # XLSX-only locked assumptions for MVP
+    # Locked assumptions for MVP
     has_headers_bool = True
     delimiter_used = ","
     header_row_used = 1
@@ -138,7 +137,7 @@ async def tb_upload(
             "filename": filename,
             "headers": headers,
             "rows": rows,
-            # passed through but locked in map.html hidden inputs
+            # unused by map.html now (locked hidden inputs), but harmless
             "has_headers": True,
             "delimiter": ",",
             "header_row": 1,
@@ -155,7 +154,7 @@ def tb_validate(
     request: Request,
     upload_id: int = Form(...),
 
-    # locked XLSX-only wizard state (still posted from map.html as hidden)
+    # Locked XLSX-only wizard state (still posted)
     has_headers: int = Form(...),
     delimiter: str = Form(...),
     header_row: int = Form(...),
@@ -185,7 +184,7 @@ def tb_validate(
         balance_col=balance_col if amount_mode == "signed" else None,
         debit_col=debit_col if amount_mode == "dc" else None,
         credit_col=credit_col if amount_mode == "dc" else None,
-        credit_sign_mode=credit_sign_mode.strip() if credit_sign_mode else "keep",
+        credit_sign_mode=(credit_sign_mode or "keep").strip().lower(),
         fund_mode=fund_mode,
         fund_col=fund_col if fund_mode == "fund_column" else None,
         fund_delimiter=fund_delimiter,
@@ -214,26 +213,27 @@ def tb_validate(
             "report": report,
             "tolerance": tolerance,
             "nets_to_zero": nets_to_zero,
+            "force_unbalanced_warning": False,
         },
     )
 
 
 # ----------------------------------------
-# Step 3: Funds Dictionary (Confirm Funds)
+# Step 3: Funds Setup Screen
 # ----------------------------------------
 @app.post("/tb/funds", response_class=HTMLResponse)
 def tb_funds(
     request: Request,
     upload_id: int = Form(...),
 
-    # locked XLSX-only wizard state
+    # Locked XLSX-only wizard state
     has_headers: int = Form(...),
     delimiter: str = Form(...),
     header_row: int = Form(...),
 
     # mapping carry-forward
     account_col: str = Form(...),
-    desc_col: str = Form(...),
+    desc_col: str = Form(""),
     amount_mode: str = Form(...),
     balance_col: str = Form(""),
     debit_col: str = Form(""),
@@ -257,7 +257,7 @@ def tb_funds(
         balance_col=balance_col if amount_mode == "signed" else None,
         debit_col=debit_col if amount_mode == "dc" else None,
         credit_col=credit_col if amount_mode == "dc" else None,
-        credit_sign_mode=credit_sign_mode.strip() if credit_sign_mode else "keep",
+        credit_sign_mode=(credit_sign_mode or "keep").strip().lower(),
         fund_mode=fund_mode,
         fund_col=fund_col if fund_mode == "fund_column" else None,
         fund_delimiter=fund_delimiter,
@@ -312,8 +312,7 @@ def tb_funds(
 # -----------------------
 @app.post("/tb/import", response_class=HTMLResponse)
 async def tb_import_commit(request: Request):
-    form = await request.form()
-    form = dict(form)
+    form = dict(await request.form())
 
     upload_id = int(form["upload_id"])
     has_headers = bool(int(form["has_headers"]))
@@ -327,7 +326,7 @@ async def tb_import_commit(request: Request):
     balance_col = (form.get("balance_col") or "").strip()
     debit_col = (form.get("debit_col") or "").strip()
     credit_col = (form.get("credit_col") or "").strip()
-    credit_sign_mode = (form.get("credit_sign_mode") or "keep").strip()
+    credit_sign_mode = (form.get("credit_sign_mode") or "keep").strip().lower()
 
     fund_mode = form["fund_mode"]
     fund_col = (form.get("fund_col") or "").strip()
@@ -340,7 +339,7 @@ async def tb_import_commit(request: Request):
         balance_col=balance_col if amount_mode == "signed" else None,
         debit_col=debit_col if amount_mode == "dc" else None,
         credit_col=credit_col if amount_mode == "dc" else None,
-        credit_sign_mode=credit_sign_mode if credit_sign_mode else "keep",
+        credit_sign_mode=credit_sign_mode,
         fund_mode=fund_mode,
         fund_col=fund_col if fund_mode == "fund_column" else None,
         fund_delimiter=fund_delimiter,
@@ -361,6 +360,7 @@ async def tb_import_commit(request: Request):
         db.commit()
         db.refresh(tbi)
 
+        # Funds
         fund_cache: Dict[str, Fund] = {}
         for k, v in form.items():
             if k.startswith("fund_name__"):
@@ -381,6 +381,7 @@ async def tb_import_commit(request: Request):
 
         db.flush()
 
+        # Accounts + lines
         acct_cache: Dict[str, Account] = {}
         imported_lines = 0
 
@@ -438,9 +439,5 @@ async def tb_import_commit(request: Request):
 
     return templates.TemplateResponse(
         "complete.html",
-        {
-            "request": request,
-            "import_name": f"TB Import - {uf.filename}",
-            "imported_lines": imported_lines,
-        },
+        {"request": request, "import_name": f"TB Import - {uf.filename}", "imported_lines": imported_lines},
     )
