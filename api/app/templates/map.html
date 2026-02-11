@@ -1,106 +1,157 @@
 {% extends "base.html" %}
 {% block content %}
+
 <div class="card">
   <h2>Map Columns</h2>
   <p><b>File:</b> {{ filename }}</p>
 
-  <h3>Preview (first rows)</h3>
-  <div style="max-height: 260px; overflow:auto;">
-    <table>
-      <thead>
-        <tr>
-          {% for h in headers %}<th>{{ h }}</th>{% endfor %}
-        </tr>
-      </thead>
-      <tbody>
-        {% for r in rows %}
-        <tr>
-          {% for h in headers %}<td>{{ r[h] }}</td>{% endfor %}
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+  <div class="warn" style="margin-top:10px;">
+    <b>Tip:</b> If the preview looks wrong, the delimiter or header settings are off. Fix them and re-upload.
   </div>
 
-  <hr/>
+  <h3 style="margin-top:16px;">Preview</h3>
+  <table>
+    <thead>
+      <tr>
+        {% for h in headers %}
+          <th>{{ h }}</th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        {% for h in headers %}
+          <td>{{ r.get(h, "") }}</td>
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2>Choose Your Columns</h2>
 
   <form action="/tb/validate" method="post">
-    <input type="hidden" name="upload_id" value="{{ upload_id }}" />
-    <input type="hidden" name="has_headers" value="{{ 1 if has_headers else 0 }}" />
-    <input type="hidden" name="delimiter" value="{{ delimiter }}" />
-    <input type="hidden" name="header_row" value="{{ header_row }}" />
+    <!-- CRITICAL: carry wizard state forward exactly -->
+    <input type="hidden" name="upload_id" value="{{ upload_id }}">
+    <input type="hidden" name="has_headers" value="{{ 1 if has_headers else 0 }}">
+    <input type="hidden" name="delimiter" value="{{ delimiter }}">
+    <input type="hidden" name="header_row" value="{{ header_row }}">
 
     <div class="row">
       <div class="col">
-        <label><b>Account number column *</b></label><br/>
+        <label><b>Account column</b></label><br>
         <select name="account_col" required>
-          {% for h in headers %}<option value="{{ h }}">{{ h }}</option>{% endfor %}
+          {% for h in headers %}
+            <option value="{{ h }}">{{ h }}</option>
+          {% endfor %}
         </select>
       </div>
+
       <div class="col">
-        <label>Description column (optional)</label><br/>
+        <label>Description column (optional)</label><br>
         <select name="desc_col">
-          <option value="">(none)</option>
-          {% for h in headers %}<option value="{{ h }}">{{ h }}</option>{% endfor %}
+          <option value="" selected>(none)</option>
+          {% for h in headers %}
+            <option value="{{ h }}">{{ h }}</option>
+          {% endfor %}
         </select>
+      </div>
+
+      <div class="col">
+        <label><b>Fund identification</b></label><br>
+        <select name="fund_mode" id="fund_mode" required>
+          <option value="fund_from_account_prefix" selected>Derive from account prefix (e.g., 10-1010)</option>
+          <option value="fund_column">Use a fund column</option>
+          <option value="single_fund">Single fund (no fund breakdown)</option>
+        </select>
+
+        <div id="fund_col_wrap" style="margin-top:8px; display:none;">
+          <label>Fund column</label><br>
+          <select name="fund_col">
+            <option value="" selected>(select)</option>
+            {% for h in headers %}
+              <option value="{{ h }}">{{ h }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div id="fund_delim_wrap" style="margin-top:8px;">
+          <label>Account delimiter</label><br>
+          <input type="text" name="fund_delimiter" value="-" style="width:80px;">
+        </div>
       </div>
     </div>
 
-    <br/>
+    <hr style="margin:16px 0;">
 
-    <div class="card">
-      <h3>Amount format</h3>
-      <label><input type="radio" name="amount_mode" value="signed" checked /> Balance column (signed)</label><br/>
-      <div style="margin-left:18px;">
-        Balance column:
+    <div class="row">
+      <div class="col">
+        <label><b>Amount format</b></label><br>
+        <select name="amount_mode" id="amount_mode" required>
+          <option value="signed" selected>Signed amount (debit +, credit -)</option>
+          <option value="dc">Separate Debit / Credit columns</option>
+        </select>
+      </div>
+
+      <div class="col" id="signed_wrap">
+        <label><b>Signed amount column</b></label><br>
         <select name="balance_col">
-          {% for h in headers %}<option value="{{ h }}">{{ h }}</option>{% endfor %}
+          <option value="" selected>(select)</option>
+          {% for h in headers %}
+            <option value="{{ h }}">{{ h }}</option>
+          {% endfor %}
         </select>
       </div>
-      <br/>
-      <label><input type="radio" name="amount_mode" value="dc" /> Debit / Credit columns (net = debit − credit)</label>
-      <div style="margin-left:18px;">
-        Debit column:
+
+      <div class="col" id="dc_wrap" style="display:none;">
+        <label><b>Debit column</b></label><br>
         <select name="debit_col">
-          {% for h in headers %}<option value="{{ h }}">{{ h }}</option>{% endfor %}
+          <option value="" selected>(select)</option>
+          {% for h in headers %}
+            <option value="{{ h }}">{{ h }}</option>
+          {% endfor %}
         </select>
-        &nbsp;&nbsp;
-        Credit column:
+
+        <div style="height:10px;"></div>
+
+        <label><b>Credit column</b></label><br>
         <select name="credit_col">
-          {% for h in headers %}<option value="{{ h }}">{{ h }}</option>{% endfor %}
+          <option value="" selected>(select)</option>
+          {% for h in headers %}
+            <option value="{{ h }}">{{ h }}</option>
+          {% endfor %}
         </select>
       </div>
     </div>
 
-    <div class="card">
-      <h3>Fund source</h3>
-      <label><input type="radio" name="fund_mode" value="fund_from_account_prefix" checked />
-        Derive fund from account prefix (e.g., 10-xxxx)
-      </label><br/>
-      <div style="margin-left:18px;">
-        Account delimiter:
-        <select name="fund_delimiter">
-          <option value="-" selected>-</option>
-          <option value=".">.</option>
-          <option value="/">/</option>
-          <option value="_">_</option>
-          <option value=" ">space</option>
-        </select>
-      </div>
-      <br/>
-      <label><input type="radio" name="fund_mode" value="fund_column" /> Fund column exists in file</label><br/>
-      <div style="margin-left:18px;">
-        Fund column:
-        <select name="fund_col">
-          {% for h in headers %}<option value="{{ h }}">{{ h }}</option>{% endfor %}
-        </select>
-      </div>
-      <br/>
-      <label><input type="radio" name="fund_mode" value="single_fund" /> Single fund for entire TB (not recommended)</label>
-    </div>
-
-    <button class="btn btn-primary" type="submit">Validate Import</button>
+    <br>
+    <button class="btn btn-primary" type="submit">Validate</button>
     <a class="btn" href="/">Start Over</a>
   </form>
 </div>
+
+<script>
+  function syncAmountUI() {
+    const mode = document.getElementById("amount_mode").value;
+    document.getElementById("signed_wrap").style.display = (mode === "signed") ? "block" : "none";
+    document.getElementById("dc_wrap").style.display = (mode === "dc") ? "block" : "none";
+  }
+
+  function syncFundUI() {
+    const mode = document.getElementById("fund_mode").value;
+    document.getElementById("fund_col_wrap").style.display = (mode === "fund_column") ? "block" : "none";
+    document.getElementById("fund_delim_wrap").style.display = (mode === "fund_from_account_prefix") ? "block" : "none";
+  }
+
+  document.getElementById("amount_mode").addEventListener("change", syncAmountUI);
+  document.getElementById("fund_mode").addEventListener("change", syncFundUI);
+
+  syncAmountUI();
+  syncFundUI();
+</script>
+
 {% endblock %}
+
