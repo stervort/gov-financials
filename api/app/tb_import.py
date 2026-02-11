@@ -55,21 +55,20 @@ class ColumnMapping:
     account_col: str
     desc_col: Optional[str]
 
-    # "signed" = total balance column (debit positive, credit negative)
-    # "dc" = separate debit and credit columns
-    mode: str  # "signed" or "dc"
+    # "signed" or "dc"
+    mode: str
 
     balance_col: Optional[str]
     debit_col: Optional[str]
     credit_col: Optional[str]
 
-    # fund logic (required)
-    fund_mode: str  # "fund_from_account_prefix" or "fund_column" or "single_fund"
+    # fund logic (REQUIRED – must be before any defaults)
+    fund_mode: str
     fund_col: Optional[str]
-    fund_delimiter: str  # e.g. "-"
+    fund_delimiter: str
 
-    # defaults MUST come after all required fields
-    credit_sign_mode: str = "keep"  # "keep" or "reverse"
+    # defaults must come AFTER all required fields
+    credit_sign_mode: str = "keep"   # "keep" or "reverse"
 
     ignore_blank_account: bool = True
     ignore_blank_amount: bool = True
