@@ -3,11 +3,12 @@ from __future__ import annotations
 import os
 import io
 import csv
+from datetime import datetime, date
 from decimal import Decimal
-from typing import Dict
+from typing import Dict, Optional
 
 from fastapi import FastAPI, Request, UploadFile, Form
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -15,7 +16,7 @@ from sqlalchemy.orm import Session
 from openpyxl import load_workbook
 
 from .db import engine, SessionLocal
-from .models import Base, UploadedFile, Fund, Account, TBImport, TBLine
+from .models import Base, Client, Binder, UploadedFile, Fund, Account, TBImport, TBLine
 from .tb_import import (
     read_csv_preview,
     ColumnMapping,
@@ -31,7 +32,6 @@ from .tb_import import (
 app = FastAPI()
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
 
-# MVP: create tables automatically
 Base.metadata.create_all(bind=engine)
 
 
@@ -41,7 +41,7 @@ def db_session() -> Session:
 
 def xlsx_bytes_to_csv_text(xlsx_bytes: bytes) -> str:
     """
-    Converts the FIRST sheet of an .xlsx into CSV text for reuse by our mapping pipeline.
+    Converts FIRST sheet of an .xlsx into CSV text for reuse by our mapping pipeline.
     """
     wb = load_workbook(filename=io.BytesIO(xlsx_bytes), data_only=True, read_only=True)
     ws = wb.worksheets[0]
@@ -74,41 +74,176 @@ def xlsx_bytes_to_csv_text(xlsx_bytes: bytes) -> str:
     return out.getvalue()
 
 
+def parse_period_end(s: str) -> date:
+    # expects YYYY-MM-DD from <input type="date">
+    return datetime.strptime(s, "%Y-%m-%d").date()
+
+
+def get_binder_or_404(db: Session, binder_id: int) -> Binder:
+    b = db.get(Binder, binder_id)
+    if not b:
+        raise ValueError("Binder not found")
+    return b
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
 
+# ============================================================
+# HOME: Select/Create Client + Period (Binder)
+# ============================================================
 @app.get("/", response_class=HTMLResponse)
-def upload_page(request: Request):
-    return templates.TemplateResponse("upload.html", {"request": request, "message": None})
+def home(request: Request):
+    with db_session() as db:
+        clients = db.scalars(select(Client).order_by(Client.client_name.asc())).all()
+
+        # recent binders (optional convenience)
+        recent_binders = db.scalars(
+            select(Binder).order_by(Binder.created_at.desc()).limit(15)
+        ).all()
+
+        # preload clients for binder list display
+        # (binder.client is lazy; easier: just rely on relationship, fine in template)
+        return templates.TemplateResponse(
+            "home.html",
+            {
+                "request": request,
+                "clients": clients,
+                "recent_binders": recent_binders,
+                "message": None,
+            },
+        )
 
 
-# -----------------------
-# Step 1: Upload & Preview (XLSX ONLY)
-# -----------------------
-@app.post("/tb/upload", response_class=HTMLResponse)
-async def tb_upload(request: Request, file: UploadFile):
+@app.post("/client/create")
+def client_create(client_name: str = Form(...)):
+    name = client_name.strip()
+    if not name:
+        return RedirectResponse("/", status_code=303)
+
+    with db_session() as db:
+        existing = db.scalar(select(Client).where(Client.client_name == name))
+        if not existing:
+            existing = Client(client_name=name)
+            db.add(existing)
+            db.commit()
+            db.refresh(existing)
+
+    return RedirectResponse("/", status_code=303)
+
+
+@app.post("/binder/open")
+def binder_open(
+    client_id: int = Form(...),
+    period_end: str = Form(...),
+):
+    pe = parse_period_end(period_end)
+
+    with db_session() as db:
+        client = db.get(Client, client_id)
+        if not client:
+            return RedirectResponse("/", status_code=303)
+
+        binder = db.scalar(
+            select(Binder).where(Binder.client_id == client_id, Binder.period_end == pe)
+        )
+        if not binder:
+            binder = Binder(client_id=client_id, period_end=pe, fiscal_year=pe.year)
+            db.add(binder)
+            db.commit()
+            db.refresh(binder)
+
+        return RedirectResponse(f"/b/{binder.id}", status_code=303)
+
+
+# ============================================================
+# BINDER HOME
+# ============================================================
+@app.get("/b/{binder_id}", response_class=HTMLResponse)
+def binder_home(request: Request, binder_id: int):
+    with db_session() as db:
+        binder = get_binder_or_404(db, binder_id)
+        client = binder.client
+
+        latest_import = db.scalar(
+            select(TBImport)
+            .where(TBImport.binder_id == binder_id)
+            .order_by(TBImport.created_at.desc())
+            .limit(1)
+        )
+
+        imported_lines = 0
+        if latest_import:
+            imported_lines = db.scalar(
+                select(TBLine)
+                .where(TBLine.tb_import_id == latest_import.id)
+                .count()
+            ) or 0
+
+        return templates.TemplateResponse(
+            "binder_home.html",
+            {
+                "request": request,
+                "client": client,
+                "binder": binder,
+                "latest_import": latest_import,
+                "imported_lines": imported_lines,
+            },
+        )
+
+
+# ============================================================
+# TB UPLOAD (XLSX ONLY)
+# ============================================================
+@app.get("/b/{binder_id}/tb/upload", response_class=HTMLResponse)
+def tb_upload_page(request: Request, binder_id: int):
+    with db_session() as db:
+        binder = get_binder_or_404(db, binder_id)
+        client = binder.client
+
+    return templates.TemplateResponse(
+        "upload.html",
+        {"request": request, "client": client, "binder": binder, "message": None},
+    )
+
+
+@app.post("/b/{binder_id}/tb/upload", response_class=HTMLResponse)
+async def tb_upload(request: Request, binder_id: int, file: UploadFile):
     raw = await file.read()
     filename = file.filename or "upload.xlsx"
     lower = filename.lower()
 
+    with db_session() as db:
+        binder = get_binder_or_404(db, binder_id)
+        client = binder.client
+
     if not lower.endswith(".xlsx"):
         return templates.TemplateResponse(
             "upload.html",
-            {"request": request, "message": "Please upload an Excel .xlsx trial balance file."},
+            {
+                "request": request,
+                "client": client,
+                "binder": binder,
+                "message": "Please upload an Excel .xlsx trial balance file.",
+            },
         )
 
     content = xlsx_bytes_to_csv_text(raw)
 
-    # Locked assumptions for XLSX wizard
+    # locked assumptions for XLSX->CSV pipeline
     has_headers_bool = True
     delimiter_used = ","
     header_row_used = 1
     content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
     with db_session() as db:
+        binder = get_binder_or_404(db, binder_id)
+        client = binder.client
+
         uf = UploadedFile(
+            binder_id=binder_id,
             filename=filename,
             content_type=content_type,
             content_text=content,
@@ -117,44 +252,45 @@ async def tb_upload(request: Request, file: UploadFile):
         db.commit()
         db.refresh(uf)
 
-        headers, rows = read_csv_preview(
-            content,
-            has_headers=has_headers_bool,
-            header_row=header_row_used,
-            delimiter=delimiter_used,
-            max_rows=50,
-        )
+    headers, rows = read_csv_preview(
+        content,
+        has_headers=has_headers_bool,
+        header_row=header_row_used,
+        delimiter=delimiter_used,
+        max_rows=50,
+    )
 
-        return templates.TemplateResponse(
-            "map.html",
-            {
-                "request": request,
-                "upload_id": uf.id,
-                "filename": filename,
-                "headers": headers,
-                "rows": rows,
-                "has_headers": True,
-                "delimiter": ",",
-                "header_row": 1,
-                "message": None,
-            },
-        )
+    return templates.TemplateResponse(
+        "map.html",
+        {
+            "request": request,
+            "client": client,
+            "binder": binder,
+            "upload_id": uf.id,
+            "filename": filename,
+            "headers": headers,
+            "rows": rows,
+            "has_headers": True,
+            "delimiter": ",",
+            "header_row": 1,
+            "message": None,
+        },
+    )
 
 
-# -----------------------
-# Step 2: Validate Mapping
-# -----------------------
-@app.post("/tb/validate", response_class=HTMLResponse)
+# ============================================================
+# TB VALIDATE
+# ============================================================
+@app.post("/b/{binder_id}/tb/validate", response_class=HTMLResponse)
 def tb_validate(
     request: Request,
-    upload_id: int = Form(...),
+    binder_id: int,
 
-    # Locked XLSX state (still posted by template)
+    upload_id: int = Form(...),
     has_headers: int = Form(...),
     delimiter: str = Form(...),
     header_row: int = Form(...),
 
-    # mapping selections
     account_col: str = Form(...),
     desc_col: str = Form(...),
 
@@ -169,6 +305,9 @@ def tb_validate(
     fund_delimiter: str = Form("-"),
 ):
     with db_session() as db:
+        binder = get_binder_or_404(db, binder_id)
+        client = binder.client
+
         uf = db.get(UploadedFile, upload_id)
         csv_text = uf.content_text if uf else ""
 
@@ -200,6 +339,8 @@ def tb_validate(
         "validate.html",
         {
             "request": request,
+            "client": client,
+            "binder": binder,
             "upload_id": upload_id,
             "mapping": mapping,
             "has_headers": bool(has_headers),
@@ -213,20 +354,22 @@ def tb_validate(
     )
 
 
-# ----------------------------------------
-# Step 3: Funds Setup Screen
-# ----------------------------------------
-@app.post("/tb/funds", response_class=HTMLResponse)
+# ============================================================
+# FUNDS SCREEN
+# ============================================================
+@app.post("/b/{binder_id}/tb/funds", response_class=HTMLResponse)
 def tb_funds(
     request: Request,
-    upload_id: int = Form(...),
+    binder_id: int,
 
+    upload_id: int = Form(...),
     has_headers: int = Form(...),
     delimiter: str = Form(...),
     header_row: int = Form(...),
 
     account_col: str = Form(...),
     desc_col: str = Form(""),
+
     amount_mode: str = Form(...),
     balance_col: str = Form(""),
     debit_col: str = Form(""),
@@ -240,6 +383,9 @@ def tb_funds(
     allow_unbalanced: str = Form("off"),
 ):
     with db_session() as db:
+        binder = get_binder_or_404(db, binder_id)
+        client = binder.client
+
         uf = db.get(UploadedFile, upload_id)
         csv_text = uf.content_text if uf else ""
 
@@ -272,6 +418,8 @@ def tb_funds(
             "validate.html",
             {
                 "request": request,
+                "client": client,
+                "binder": binder,
                 "upload_id": upload_id,
                 "mapping": mapping,
                 "has_headers": bool(has_headers),
@@ -290,6 +438,8 @@ def tb_funds(
         "funds.html",
         {
             "request": request,
+            "client": client,
+            "binder": binder,
             "upload_id": upload_id,
             "has_headers": int(has_headers),
             "delimiter": delimiter,
@@ -301,11 +451,12 @@ def tb_funds(
     )
 
 
-# -----------------------
-# Step 4: Commit TB Import
-# -----------------------
-@app.post("/tb/import", response_class=HTMLResponse)
-async def tb_import_commit(request: Request):
+# ============================================================
+# IMPORT COMMIT
+# - replaces existing TB import for this binder
+# ============================================================
+@app.post("/b/{binder_id}/tb/import", response_class=HTMLResponse)
+async def tb_import_commit(request: Request, binder_id: int):
     form = dict(await request.form())
 
     upload_id = int(form["upload_id"])
@@ -340,26 +491,36 @@ async def tb_import_commit(request: Request):
     )
 
     imported_lines = 0
-    uf_filename = "upload.xlsx"  # fallback
 
     with db_session() as db:
+        binder = get_binder_or_404(db, binder_id)
+        client = binder.client
+
         uf = db.get(UploadedFile, upload_id)
         if not uf:
             return templates.TemplateResponse(
                 "complete.html",
-                {"request": request, "import_name": "Import failed", "imported_lines": 0},
+                {"request": request, "client": client, "binder": binder, "import_name": "Import failed", "imported_lines": 0},
             )
 
-        # capture while session is open
         uf_filename = uf.filename
         csv_text = uf.content_text
 
-        tbi = TBImport(import_name=f"TB Import - {uf_filename}", uploaded_file_id=upload_id)
-        db.add(tbi)
-        db.commit()
-        db.refresh(tbi)
+        # Replace existing TB for this binder (delete old import + lines)
+        existing_imports = db.scalars(select(TBImport).where(TBImport.binder_id == binder_id)).all()
+        for old in existing_imports:
+            db.delete(old)
+        db.flush()
 
-        # Funds
+        tbi = TBImport(
+            binder_id=binder_id,
+            import_name=f"TB Import - {uf_filename}",
+            uploaded_file_id=upload_id,
+        )
+        db.add(tbi)
+        db.flush()
+
+        # Funds cache
         fund_cache: Dict[str, Fund] = {}
         for k, v in form.items():
             if k.startswith("fund_name__"):
@@ -380,7 +541,6 @@ async def tb_import_commit(request: Request):
 
         db.flush()
 
-        # Accounts + Lines
         acct_cache: Dict[str, Account] = {}
 
         for rowno, row in iter_csv_rows(csv_text, has_headers, header_row, delimiter):
@@ -435,7 +595,5 @@ async def tb_import_commit(request: Request):
 
         db.commit()
 
-    return templates.TemplateResponse(
-        "complete.html",
-        {"request": request, "import_name": f"TB Import - {uf_filename}", "imported_lines": imported_lines},
-    )
+    # After import: go to binder home
+    return RedirectResponse(f"/b/{binder_id}", status_code=303)
