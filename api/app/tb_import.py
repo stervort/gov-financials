@@ -1,137 +1,241 @@
-@app.post("/tb/import", response_class=HTMLResponse)
-async def tb_import_commit(request: Request):
-    form = dict(await request.form())
 
-    upload_id = int(form["upload_id"])
-    has_headers = bool(int(form["has_headers"]))
-    delimiter = form["delimiter"]
-    header_row = int(form["header_row"])
+from __future__ import annotations
 
-    account_col = form["account_col"]
-    desc_col = (form.get("desc_col") or "").strip()
+import csv
+import io
+from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
+from typing import Dict, List, Optional, Tuple
 
-    amount_mode = form["amount_mode"]
-    balance_col = (form.get("balance_col") or "").strip()
-    debit_col = (form.get("debit_col") or "").strip()
-    credit_col = (form.get("credit_col") or "").strip()
-    credit_sign_mode = (form.get("credit_sign_mode") or "keep").strip().lower()
 
-    fund_mode = form["fund_mode"]
-    fund_col = (form.get("fund_col") or "").strip()
-    fund_delimiter = (form.get("fund_delimiter") or "-").strip()
+def _strip_bom(s: str) -> str:
+    return s.lstrip("\ufeff") if isinstance(s, str) else s
 
-    mapping = ColumnMapping(
-        account_col=account_col,
-        desc_col=desc_col if desc_col else None,
-        mode=amount_mode,
-        balance_col=balance_col if amount_mode == "signed" else None,
-        debit_col=debit_col if amount_mode == "dc" else None,
-        credit_col=credit_col if amount_mode == "dc" else None,
-        credit_sign_mode=credit_sign_mode,
-        fund_mode=fund_mode,
-        fund_col=fund_col if fund_mode == "fund_column" else None,
-        fund_delimiter=fund_delimiter or "-",
-    )
 
-    imported_lines = 0
-    uf_filename = "upload.xlsx"  # fallback
+def _normalize_csv_text(csv_text: str) -> str:
+    # XLSX->CSV path should not have BOM, but safe anyway
+    return _strip_bom(csv_text)
 
-    with db_session() as db:
-        uf = db.get(UploadedFile, upload_id)
-        if not uf:
-            return templates.TemplateResponse(
-                "complete.html",
-                {"request": request, "import_name": "Import failed", "imported_lines": 0},
-            )
 
-        # IMPORTANT: capture filename while session is open
-        uf_filename = uf.filename
+@dataclass
+class ColumnMapping:
+    # REQUIRED fields (no defaults)
+    account_col: str
+    desc_col: Optional[str]
 
-        csv_text = uf.content_text
+    # "signed" (single balance col) or "dc" (debit/credit cols)
+    mode: str
 
-        tbi = TBImport(import_name=f"TB Import - {uf_filename}", uploaded_file_id=upload_id)
-        db.add(tbi)
-        db.commit()
-        db.refresh(tbi)
+    balance_col: Optional[str]
+    debit_col: Optional[str]
+    credit_col: Optional[str]
 
-        # Funds
-        fund_cache: Dict[str, Fund] = {}
-        for k, v in form.items():
-            if k.startswith("fund_name__"):
-                code = k.split("__", 1)[1]
-                name = str(v).strip()
-                ftype = str(form.get(f"fund_type__{code}", "")).strip()
+    # REQUIRED: avoid dataclass ordering issues forever
+    # "keep" or "reverse"
+    credit_sign_mode: str
 
-                existing = db.scalar(select(Fund).where(Fund.fund_code == code))
-                if not existing:
-                    existing = Fund(fund_code=code, fund_name=name, fund_type=ftype)
-                    db.add(existing)
-                    db.flush()
-                else:
-                    existing.fund_name = name
-                    existing.fund_type = ftype
+    # Fund logic
+    fund_mode: str  # "fund_from_account_prefix" | "fund_column" | "single_fund"
+    fund_col: Optional[str]
+    fund_delimiter: str
 
-                fund_cache[code] = existing
+    # Defaults
+    ignore_blank_account: bool = True
+    ignore_blank_amount: bool = True
+    ignore_zero: bool = True
 
-        db.flush()
 
-        # Accounts + Lines
-        acct_cache: Dict[str, Account] = {}
+def parse_decimal(value: str) -> Optional[Decimal]:
+    if value is None:
+        return None
+    s = str(value).strip()
+    if s == "":
+        return None
 
-        for rowno, row in iter_csv_rows(csv_text, has_headers, header_row, delimiter):
-            acct = (row.get(mapping.account_col, "") or "").strip()
-            if mapping.ignore_blank_account and acct == "":
-                continue
+    # parentheses negatives: (123.45)
+    if s.startswith("(") and s.endswith(")"):
+        s = "-" + s[1:-1]
 
-            if mapping.fund_mode == "fund_from_account_prefix":
-                fund_code = derive_fund_from_account(acct, mapping.fund_delimiter)
-            elif mapping.fund_mode == "fund_column":
-                fund_code = (row.get(mapping.fund_col or "", "") or "").strip()
-            else:
-                fund_code = "SINGLE"
+    # remove thousands separators
+    s = s.replace(",", "")
 
-            if fund_code == "":
-                continue
+    try:
+        return Decimal(s)
+    except InvalidOperation:
+        return None
 
-            amt, _warns = normalize_amount(row, mapping)
-            if amt is None:
-                continue
-            if mapping.ignore_zero and amt == 0:
-                continue
 
-            desc = ""
-            if mapping.desc_col:
-                desc = (row.get(mapping.desc_col, "") or "").strip()
+def read_csv_preview(
+    csv_text: str,
+    has_headers: bool = True,
+    header_row: int = 1,
+    delimiter: str = ",",
+    max_rows: int = 50,
+):
+    """
+    Returns (headers, rows)
+    If headers: rows is list[dict]
+    Else: rows is list[list] with synthetic headers
+    """
+    csv_text = _normalize_csv_text(csv_text)
 
-            fund = fund_cache.get(fund_code) or db.scalar(select(Fund).where(Fund.fund_code == fund_code))
-            if not fund:
-                fund = Fund(fund_code=fund_code, fund_name="", fund_type="")
-                db.add(fund)
-                db.flush()
-                fund_cache[fund_code] = fund
+    f = io.StringIO(csv_text)
 
-            acct_obj = acct_cache.get(acct) or db.scalar(select(Account).where(Account.account_number == acct))
-            if not acct_obj:
-                acct_obj = Account(account_number=acct, account_name=desc[:255] if desc else "")
-                db.add(acct_obj)
-                db.flush()
-                acct_cache[acct] = acct_obj
+    for _ in range(header_row - 1):
+        f.readline()
 
-            line = TBLine(
-                tb_import_id=tbi.id,
-                fund_id=fund.id,
-                account_id=acct_obj.id,
-                description=desc[:255],
-                amount=float(amt),
-                source_row=rowno,
-            )
-            db.add(line)
-            imported_lines += 1
+    reader = csv.reader(f, delimiter=delimiter)
+    try:
+        first = next(reader)
+    except StopIteration:
+        return [], []
 
-        db.commit()
+    if has_headers:
+        headers = [(_strip_bom(h).strip() if h else "") for h in first]
+        rows: List[Dict[str, str]] = []
+        for i, r in enumerate(reader):
+            if i >= max_rows:
+                break
+            row = {headers[j]: (r[j] if j < len(r) else "") for j in range(len(headers))}
+            rows.append(row)
+        return headers, rows
 
-    # session is closed here, but we use uf_filename (string), not uf.filename
-    return templates.TemplateResponse(
-        "complete.html",
-        {"request": request, "import_name": f"TB Import - {uf_filename}", "imported_lines": imported_lines},
-    )
+    headers = [f"Column {i+1}" for i in range(len(first))]
+    rows_list: List[List[str]] = [first]
+    for i, r in enumerate(reader):
+        if i >= max_rows - 1:
+            break
+        rows_list.append(r)
+    return headers, rows_list
+
+
+def iter_csv_rows(csv_text: str, has_headers: bool, header_row: int, delimiter: str):
+    """
+    Yields (row_number_in_source, row_dict)
+    """
+    csv_text = _normalize_csv_text(csv_text)
+
+    f = io.StringIO(csv_text)
+
+    for _ in range(header_row - 1):
+        f.readline()
+
+    if has_headers:
+        reader = csv.DictReader(f, delimiter=delimiter)
+        for idx, row in enumerate(reader, start=header_row + 1):
+            fixed: Dict[str, str] = {}
+            if row:
+                for k, v in row.items():
+                    kk = _strip_bom(k).strip() if isinstance(k, str) else k
+                    fixed[kk] = v
+            yield idx, fixed
+    else:
+        reader = csv.reader(f, delimiter=delimiter)
+        for idx, row in enumerate(reader, start=header_row + 1):
+            yield idx, {f"Column {i+1}": (row[i] if i < len(row) else "") for i in range(len(row))}
+
+
+def derive_fund_from_account(account: str, delimiter: str) -> str:
+    s = (account or "").strip()
+    if s == "":
+        return ""
+    parts = s.split(delimiter, 1)
+    return parts[0].strip() if parts else ""
+
+
+def normalize_amount(row: Dict[str, str], mapping: ColumnMapping) -> Tuple[Optional[Decimal], List[str]]:
+    warnings: List[str] = []
+
+    # Signed total balance
+    if mapping.mode == "signed":
+        raw = row.get(mapping.balance_col or "", "")
+        amt = parse_decimal(raw)
+        if amt is None:
+            return None, ["Non-numeric balance"]
+        return amt, warnings
+
+    # Debit / Credit
+    d_raw = row.get(mapping.debit_col or "", "")
+    c_raw = row.get(mapping.credit_col or "", "")
+    d = parse_decimal(d_raw) or Decimal("0")
+    c = parse_decimal(c_raw) or Decimal("0")
+
+    if (d_raw or "").strip() != "" and (c_raw or "").strip() != "":
+        warnings.append("Both debit and credit populated")
+
+    # If credits are stored as positive but should be negative, reverse sign.
+    # keep: use c as-is; reverse: flip c
+    if (mapping.credit_sign_mode or "keep").lower() == "reverse":
+        c = -c
+
+    amt = d - c
+    return amt, warnings
+
+
+def validate_tb(
+    csv_text: str,
+    has_headers: bool,
+    header_row: int,
+    delimiter: str,
+    mapping: ColumnMapping,
+) -> dict:
+    total = Decimal("0")
+    row_count = 0
+    kept = 0
+    non_numeric = 0
+    missing_account = 0
+    missing_fund = 0
+    both_dc = 0
+
+    fund_counts: Dict[str, int] = {}
+    top_abs: List[Tuple[Decimal, str, str, int]] = []  # (abs, fund, acct, rowno)
+
+    for rowno, row in iter_csv_rows(csv_text, has_headers, header_row, delimiter):
+        row_count += 1
+
+        acct = (row.get(mapping.account_col, "") or "").strip()
+        if mapping.ignore_blank_account and acct == "":
+            missing_account += 1
+            continue
+
+        if mapping.fund_mode == "fund_from_account_prefix":
+            fund = derive_fund_from_account(acct, mapping.fund_delimiter)
+        elif mapping.fund_mode == "fund_column":
+            fund = (row.get(mapping.fund_col or "", "") or "").strip()
+        else:
+            fund = "SINGLE"
+
+        if fund == "":
+            missing_fund += 1
+            continue
+
+        amt, warns = normalize_amount(row, mapping)
+        if amt is None:
+            non_numeric += 1
+            continue
+
+        if "Both debit and credit populated" in warns:
+            both_dc += 1
+
+        if mapping.ignore_zero and amt == 0:
+            continue
+
+        kept += 1
+        total += amt
+        fund_counts[fund] = fund_counts.get(fund, 0) + 1
+        top_abs.append((abs(amt), fund, acct, rowno))
+
+    top_abs.sort(reverse=True, key=lambda x: x[0])
+    top_abs = top_abs[:10]
+
+    return {
+        "rows_read": row_count,
+        "rows_kept": kept,
+        "total_net": total,
+        "missing_account": missing_account,
+        "missing_fund": missing_fund,
+        "non_numeric": non_numeric,
+        "both_dc": both_dc,
+        "fund_counts": fund_counts,
+        "top_abs": top_abs,
+    }
