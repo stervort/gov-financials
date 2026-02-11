@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card">
+  <h2>Delete Binder</h2>
+
+  <div class="warn">
+    <b>Warning:</b> This deletes the binder and all binder-scoped data (imports, lines, etc.).
+  </div>
+
+  <br/>
+
+  {% if error %}
+    <div class="err">{{ error }}</div>
+    <br/>
+  {% endif %}
+
+  <p><b>Binder:</b> {{ binder_label }}</p>
+
+  <p>To confirm, type exactly:</p>
+  <div class="card" style="background:#f6f7fb;">
+    <code>{{ confirm_phrase }}</code>
+  </div>
+
+  <form action="/binder/{{ binder_id }}/delete" method="post">
+    <label><b>Confirmation</b></label>
+    <input type="text" name="confirm_text" placeholder="Type confirmation phrase..." required />
+    <br/><br/>
+    <button class="btn btn-danger" type="submit">Delete Binder</button>
+    <a class="btn" href="/">Cancel</a>
+  </form>
+</div>
+
+{% endblock %}
