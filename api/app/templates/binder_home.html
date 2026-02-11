@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card">
+  <h2>Binder Home</h2>
+
+  {% if latest_import %}
+    <p><b>Latest TB Import:</b> {{ latest_import.import_name }}</p>
+    <p><b>Imported on:</b> {{ latest_import.created_at }}</p>
+    <p><b>Lines imported:</b> {{ imported_lines }}</p>
+  {% else %}
+    <p>No TB imported yet for this binder.</p>
+  {% endif %}
+
+  <div style="margin-top:12px;">
+    <a class="btn btn-primary" href="/b/{{ binder.id }}/tb/upload">Upload / Replace Trial Balance</a>
+    <a class="btn" href="/">Change Client/Binder</a>
+  </div>
+</div>
+
+{% endblock %}
