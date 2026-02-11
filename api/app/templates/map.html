@@ -5,10 +5,6 @@
   <h2>Map Columns</h2>
   <p><b>File:</b> {{ filename }}</p>
 
-  <div class="warn" style="margin-top:10px;">
-    <b>Tip:</b> If the preview looks wrong, the delimiter or header settings are off. Fix them and re-upload.
-  </div>
-
   <h3 style="margin-top:16px;">Preview</h3>
   <table>
     <thead>
@@ -34,11 +30,11 @@
   <h2>Choose Your Columns</h2>
 
   <form action="/tb/validate" method="post">
-    <!-- CRITICAL: carry wizard state forward exactly -->
+    <!-- Wizard state (locked for XLSX-only MVP) -->
     <input type="hidden" name="upload_id" value="{{ upload_id }}">
-    <input type="hidden" name="has_headers" value="{{ 1 if has_headers else 0 }}">
-    <input type="hidden" name="delimiter" value="{{ delimiter }}">
-    <input type="hidden" name="header_row" value="{{ header_row }}">
+    <input type="hidden" name="has_headers" value="1">
+    <input type="hidden" name="delimiter" value=",">
+    <input type="hidden" name="header_row" value="1">
 
     <div class="row">
       <div class="col">
