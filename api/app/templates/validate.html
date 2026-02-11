@@ -1,76 +1,71 @@
 {% extends "base.html" %}
 {% block content %}
+
 <div class="card">
-  <h2>Validation Summary</h2>
+  <h2>Validate Import</h2>
 
-  <div class="row">
-    <div class="col card">
-      <h3>Counts</h3>
-      <p>Rows read: <b>{{ report.rows_read }}</b></p>
-      <p>Rows kept: <b>{{ report.rows_kept }}</b></p>
-      <p>Funds detected: <b>{{ report.fund_counts|length }}</b></p>
+  {% if force_unbalanced_warning %}
+    <div class="warn">
+      <b>TB does not net to zero.</b> Check your mapping, delimiter, headers, and amounts.
+      If you still want to continue, check “Allow unbalanced” and continue.
     </div>
-    <div class="col card">
-      <h3>Net-to-zero</h3>
-      <p>Total net: <b>{{ report.total_net }}</b></p>
-      <p>Tolerance: <b>{{ tolerance }}</b></p>
-      {% if nets_to_zero %}
-        <p>✅ Nets to zero</p>
-      {% else %}
-        <div class="warn">
-          <b>⚠ Trial balance does not net to zero.</b><br/>
-          Difference: {{ report.total_net }}<br/>
-          You can still import for mapping/testing, but fix TB before relying on outputs.
-        </div>
-      {% endif %}
-    </div>
+  {% endif %}
+
+  <div class="card">
+    <p><b>Total net:</b> {{ report.total_net }}</p>
+    <p><b>Nets to zero (±{{ tolerance }}):</b> {{ "YES" if nets_to_zero else "NO" }}</p>
   </div>
 
   <div class="card">
-    <h3>Data quality</h3>
-    <ul>
-      <li>Missing account rows skipped: {{ report.missing_account }}</li>
-      <li>Missing fund rows skipped: {{ report.missing_fund }}</li>
-      <li>Non-numeric amount rows skipped: {{ report.non_numeric }}</li>
-      <li>Rows with both debit & credit filled (warning): {{ report.both_dc }}</li>
-    </ul>
-  </div>
-
-  <div class="card">
-    <h3>Funds</h3>
+    <h3>Detected Funds</h3>
     <table>
-      <thead><tr><th>Fund</th><th>Rows</th></tr></thead>
+      <thead>
+        <tr>
+          <th>Fund</th>
+          <th>Rows</th>
+        </tr>
+      </thead>
       <tbody>
-        {% for k,v in report.fund_counts.items() %}
-        <tr><td>{{ k }}</td><td>{{ v }}</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-
-  <div class="card">
-    <h3>Top balances (absolute)</h3>
-    <table>
-      <thead><tr><th>Abs</th><th>Fund</th><th>Account</th><th>Source row</th></tr></thead>
-      <tbody>
-        {% for a,f,acct,rowno in report.top_abs %}
-        <tr><td>{{ a }}</td><td>{{ f }}</td><td>{{ acct }}</td><td>{{ rowno }}</td></tr>
+        {% for code, cnt in report.fund_counts.items() %}
+        <tr>
+          <td>{{ code }}</td>
+          <td>{{ cnt }}</td>
+        </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
 
   <form action="/tb/funds" method="post">
-    <!-- pass-through -->
-    <input type="hidden" name="upload_id" value="{{ upload_id }}" />
-    <input type="hidden" name="has_headers" value="{{ 1 if has_headers else 0 }}" />
-    <input type="hidden" name="delimiter" value="{{ delimiter }}" />
-    <input type="hidden" name="header_row" value="{{ header_row }}" />
+    <!-- CRITICAL: carry wizard state forward exactly -->
+    <input type="hidden" name="upload_id" value="{{ upload_id }}">
+    <input type="hidden" name="has_headers" value="{{ 1 if has_headers else 0 }}">
+    <input type="hidden" name="delimiter" value="{{ delimiter }}">
+    <input type="hidden" name="header_row" value="{{ header_row }}">
 
-    <input type="hidden" name="account_col" value="{{ mapping.account_col }}" />
-    <input type="hidden" name="desc_col" value="{{ mapping.desc_col or '' }}" />
-    <input type="hidden" name="amount_mode" value="{{ mapping.mode }}" />
-    <input type="hidden" name="balance_col" value="{{ mapping.balance_col or '' }}" />
-    <input type="hidden" name="debit_col" value="{{ mapping.debit_col or '' }}" />
-    <input type="hidden" name="credit_col" value="{{ mapping.credit_col or '' }}" />
-    <input type="hidden
+    <!-- mapping carry-forward -->
+    <input type="hidden" name="account_col" value="{{ mapping.account_col }}">
+    <input type="hidden" name="desc_col" value="{{ mapping.desc_col or '' }}">
+    <input type="hidden" name="amount_mode" value="{{ mapping.mode }}">
+    <input type="hidden" name="balance_col" value="{{ mapping.balance_col or '' }}">
+    <input type="hidden" name="debit_col" value="{{ mapping.debit_col or '' }}">
+    <input type="hidden" name="credit_col" value="{{ mapping.credit_col or '' }}">
+    <input type="hidden" name="fund_mode" value="{{ mapping.fund_mode }}">
+    <input type="hidden" name="fund_col" value="{{ mapping.fund_col or '' }}">
+    <input type="hidden" name="fund_delimiter" value="{{ mapping.fund_delimiter }}">
+
+    {% if not nets_to_zero %}
+      <div style="margin:10px 0;">
+        <label>
+          <input type="checkbox" name="allow_unbalanced" value="on">
+          Allow unbalanced and continue anyway
+        </label>
+      </div>
+    {% endif %}
+
+    <button class="btn btn-primary" type="submit">Continue</button>
+    <a class="btn" href="/">Start Over</a>
+  </form>
+</div>
+
+{% endblock %}
