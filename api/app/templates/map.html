@@ -5,10 +5,6 @@
   <h2>Map Columns</h2>
   <p><b>File:</b> {{ filename }}</p>
 
-  <div class="warn" style="margin-top:10px;">
-    <b>Tip:</b> If the preview looks wrong, re-upload the Excel file and confirm the first row is your header row.
-  </div>
-
   <h3 style="margin-top:16px;">Preview</h3>
   <table>
     <thead>
@@ -33,8 +29,7 @@
 <div class="card">
   <h2>Choose Your Columns</h2>
 
-  <form action="/tb/validate" method="post">
-    <!-- carry wizard state forward -->
+  <form action="/b/{{ binder.id }}/tb/validate" method="post">
     <input type="hidden" name="upload_id" value="{{ upload_id }}">
     <input type="hidden" name="has_headers" value="{{ 1 if has_headers else 0 }}">
     <input type="hidden" name="delimiter" value="{{ delimiter }}">
@@ -96,8 +91,8 @@
       </div>
 
       <div class="col" id="signed_wrap">
-        <label><b>Total balance column</b></label><br>
-        <select name="balance_col" required>
+        <label><b>Total Balance column</b></label><br>
+        <select name="balance_col">
           <option value="" selected>(select)</option>
           {% for h in headers %}
             <option value="{{ h }}">{{ h }}</option>
@@ -107,7 +102,7 @@
 
       <div class="col" id="dc_wrap" style="display:none;">
         <label><b>Debit column</b></label><br>
-        <select name="debit_col" required>
+        <select name="debit_col">
           <option value="" selected>(select)</option>
           {% for h in headers %}
             <option value="{{ h }}">{{ h }}</option>
@@ -117,47 +112,34 @@
         <div style="height:10px;"></div>
 
         <label><b>Credit column</b></label><br>
-        <select name="credit_col" required>
+        <select name="credit_col">
           <option value="" selected>(select)</option>
           {% for h in headers %}
             <option value="{{ h }}">{{ h }}</option>
           {% endfor %}
         </select>
 
-        <div id="credit_sign_wrap" style="margin-top:10px;">
-          <label><b>Credit sign handling</b></label><br>
-          <select name="credit_sign_mode" required>
-            <option value="keep" selected>Keep Sign (typical: credits are positive numbers)</option>
-            <option value="reverse">Reverse Sign (use if credits are stored as negative)</option>
-          </select>
-          <div style="font-size:12px; opacity:.8; margin-top:6px;">
-            This only affects the Credit column. We compute: <b>amount = debit - credit</b>.
-          </div>
-        </div>
+        <div style="height:10px;"></div>
+
+        <label><b>Credit sign handling</b></label><br>
+        <select name="credit_sign_mode">
+          <option value="keep" selected>Keep Sign (credit is positive)</option>
+          <option value="reverse">Reverse Sign (credit is positive but should be negative)</option>
+        </select>
       </div>
     </div>
 
     <br>
     <button class="btn btn-primary" type="submit">Validate</button>
-    <a class="btn" href="/">Start Over</a>
+    <a class="btn" href="/b/{{ binder.id }}">Cancel</a>
   </form>
 </div>
 
 <script>
   function syncAmountUI() {
     const mode = document.getElementById("amount_mode").value;
-
     document.getElementById("signed_wrap").style.display = (mode === "signed") ? "block" : "none";
     document.getElementById("dc_wrap").style.display = (mode === "dc") ? "block" : "none";
-
-    // If signed, the balance_col must be required; if dc, debit/credit required
-    const balance = document.querySelector('select[name="balance_col"]');
-    const debit = document.querySelector('select[name="debit_col"]');
-    const credit = document.querySelector('select[name="credit_col"]');
-
-    if (balance) balance.required = (mode === "signed");
-    if (debit) debit.required = (mode === "dc");
-    if (credit) credit.required = (mode === "dc");
   }
 
   function syncFundUI() {
