@@ -11,12 +11,15 @@
     <input type="hidden" name="delimiter" value="{{ delimiter }}" />
     <input type="hidden" name="header_row" value="{{ header_row }}" />
 
+    <!-- mapping carry-forward -->
     <input type="hidden" name="account_col" value="{{ mapping.account_col }}" />
     <input type="hidden" name="desc_col" value="{{ mapping.desc_col or '' }}" />
+
     <input type="hidden" name="amount_mode" value="{{ mapping.mode }}" />
     <input type="hidden" name="balance_col" value="{{ mapping.balance_col or '' }}" />
     <input type="hidden" name="debit_col" value="{{ mapping.debit_col or '' }}" />
     <input type="hidden" name="credit_col" value="{{ mapping.credit_col or '' }}" />
+    <input type="hidden" name="credit_sign_mode" value="{{ mapping.credit_sign_mode }}" />
 
     <input type="hidden" name="fund_mode" value="{{ mapping.fund_mode }}" />
     <input type="hidden" name="fund_col" value="{{ mapping.fund_col or '' }}" />
