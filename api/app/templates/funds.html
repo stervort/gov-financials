@@ -4,8 +4,7 @@
   <h2>Confirm Funds</h2>
   <p>We detected these fund codes. Enter names and choose fund type. This will be remembered next year.</p>
 
-  <form action="/tb/import" method="post">
-    <!-- pass-through wizard state -->
+  <form action="/b/{{ binder.id }}/tb/import" method="post">
     <input type="hidden" name="upload_id" value="{{ upload_id }}" />
     <input type="hidden" name="has_headers" value="{{ has_headers }}" />
     <input type="hidden" name="delimiter" value="{{ delimiter }}" />
@@ -39,7 +38,7 @@
           <td><b>{{ code }}</b></td>
           <td>{{ fund_counts[code] }}</td>
           <td>
-            <input type="text" name="fund_name__{{ code }}" placeholder="e.g., General Fund" style="width: 100%;" />
+            <input type="text" name="fund_name__{{ code }}" placeholder="e.g., General Fund" style="width: 100%;" required />
           </td>
           <td>
             <select name="fund_type__{{ code }}" required>
@@ -57,7 +56,7 @@
 
     <br/>
     <button class="btn btn-primary" type="submit">Import TB</button>
-    <a class="btn" href="/">Start Over</a>
+    <a class="btn" href="/b/{{ binder.id }}">Cancel</a>
   </form>
 </div>
 {% endblock %}
