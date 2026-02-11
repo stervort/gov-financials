@@ -7,77 +7,43 @@ from decimal import Decimal, InvalidOperation
 from typing import Dict, List, Optional, Tuple
 
 
-# -------------------------
-# Helpers for messy exports
-# -------------------------
 def _strip_bom(s: str) -> str:
     return s.lstrip("\ufeff") if isinstance(s, str) else s
 
 
-def _normalize_header_if_needed(csv_text: str, delimiter: str, has_headers: bool, header_row: int) -> str:
-    """
-    Fix a common issue:
-    header is TAB-delimited (sometimes quoted) but data is comma-delimited.
-    We only patch header_row==1 to keep behavior predictable.
-    """
-    if not has_headers:
-        return csv_text
-    if header_row != 1:
-        return _strip_bom(csv_text)
-
-    lines = csv_text.splitlines()
-    if not lines:
-        return csv_text
-
-    header = _strip_bom(lines[0])
-
-    if delimiter == "," and ("\t" in header) and ("," not in header):
-        header = header.replace("\t", ",")
-        lines[0] = header
-        return "\n".join(lines)
-
-    lines[0] = header
-    return "\n".join(lines)
+def _normalize_csv_text(csv_text: str) -> str:
+    # XLSX->CSV path should not have BOM, but safe anyway
+    return _strip_bom(csv_text)
 
 
-def _normalize_csv_text(csv_text: str, delimiter: str, has_headers: bool, header_row: int) -> str:
-    csv_text = _strip_bom(csv_text)
-    csv_text = _normalize_header_if_needed(csv_text, delimiter, has_headers, header_row)
-    return csv_text
-
-
-# -------------------------
-# Data model
-# -------------------------
 @dataclass
 class ColumnMapping:
-    # required (no defaults)
+    # REQUIRED fields (no defaults)
     account_col: str
     desc_col: Optional[str]
 
-    # "signed" or "dc"
+    # "signed" (single balance col) or "dc" (debit/credit cols)
     mode: str
 
     balance_col: Optional[str]
     debit_col: Optional[str]
     credit_col: Optional[str]
 
-    # fund logic (REQUIRED – must be before any defaults)
-    fund_mode: str
+    # REQUIRED: avoid dataclass ordering issues forever
+    # "keep" or "reverse"
+    credit_sign_mode: str
+
+    # Fund logic
+    fund_mode: str  # "fund_from_account_prefix" | "fund_column" | "single_fund"
     fund_col: Optional[str]
     fund_delimiter: str
 
-    # defaults must come AFTER all required fields
-    credit_sign_mode: str = "keep"   # "keep" or "reverse"
-
+    # Defaults
     ignore_blank_account: bool = True
     ignore_blank_amount: bool = True
     ignore_zero: bool = True
 
 
-# -------------------------
-# Parsing amounts
-# -------------------------
 def parse_decimal(value: str) -> Optional[Decimal]:
     if value is None:
         return None
@@ -85,7 +51,7 @@ def parse_decimal(value: str) -> Optional[Decimal]:
     if s == "":
         return None
 
-    # handle parentheses negatives e.g. (1,234.56)
+    # parentheses negatives: (123.45)
     if s.startswith("(") and s.endswith(")"):
         s = "-" + s[1:-1]
 
@@ -98,9 +64,6 @@ def parse_decimal(value: str) -> Optional[Decimal]:
         return None
 
 
-# -------------------------
-# CSV preview + iteration
-# -------------------------
 def read_csv_preview(
     csv_text: str,
     has_headers: bool = True,
@@ -110,14 +73,13 @@ def read_csv_preview(
 ):
     """
     Returns (headers, rows)
-    - if has_headers: rows is List[Dict[str,str]]
-    - else: rows is List[List[str]] (but we still return synthetic headers)
+    If headers: rows is list[dict]
+    Else: rows is list[list] with synthetic headers
     """
-    csv_text = _normalize_csv_text(csv_text, delimiter, has_headers, header_row)
+    csv_text = _normalize_csv_text(csv_text)
 
     f = io.StringIO(csv_text)
 
-    # Skip to header row
     for _ in range(header_row - 1):
         f.readline()
 
@@ -130,23 +92,19 @@ def read_csv_preview(
     if has_headers:
         headers = [(_strip_bom(h).strip() if h else "") for h in first]
         rows: List[Dict[str, str]] = []
-
         for i, r in enumerate(reader):
             if i >= max_rows:
                 break
             row = {headers[j]: (r[j] if j < len(r) else "") for j in range(len(headers))}
             rows.append(row)
-
         return headers, rows
 
     headers = [f"Column {i+1}" for i in range(len(first))]
     rows_list: List[List[str]] = [first]
-
     for i, r in enumerate(reader):
         if i >= max_rows - 1:
             break
         rows_list.append(r)
-
     return headers, rows_list
 
 
@@ -154,22 +112,21 @@ def iter_csv_rows(csv_text: str, has_headers: bool, header_row: int, delimiter: 
     """
     Yields (row_number_in_source, row_dict)
     """
-    csv_text = _normalize_csv_text(csv_text, delimiter, has_headers, header_row)
+    csv_text = _normalize_csv_text(csv_text)
 
     f = io.StringIO(csv_text)
+
     for _ in range(header_row - 1):
         f.readline()
 
     if has_headers:
         reader = csv.DictReader(f, delimiter=delimiter)
         for idx, row in enumerate(reader, start=header_row + 1):
-            if not row:
-                yield idx, {}
-                continue
             fixed: Dict[str, str] = {}
-            for k, v in row.items():
-                kk = _strip_bom(k).strip() if isinstance(k, str) else k
-                fixed[kk] = v
+            if row:
+                for k, v in row.items():
+                    kk = _strip_bom(k).strip() if isinstance(k, str) else k
+                    fixed[kk] = v
             yield idx, fixed
     else:
         reader = csv.reader(f, delimiter=delimiter)
@@ -177,9 +134,6 @@ def iter_csv_rows(csv_text: str, has_headers: bool, header_row: int, delimiter: 
             yield idx, {f"Column {i+1}": (row[i] if i < len(row) else "") for i in range(len(row))}
 
 
-# -------------------------
-# Fund derivation
-# -------------------------
 def derive_fund_from_account(account: str, delimiter: str) -> str:
     s = (account or "").strip()
     if s == "":
@@ -188,13 +142,10 @@ def derive_fund_from_account(account: str, delimiter: str) -> str:
     return parts[0].strip() if parts else ""
 
 
-# -------------------------
-# Normalize row amount
-# -------------------------
 def normalize_amount(row: Dict[str, str], mapping: ColumnMapping) -> Tuple[Optional[Decimal], List[str]]:
     warnings: List[str] = []
 
-    # Signed total balance mode
+    # Signed total balance
     if mapping.mode == "signed":
         raw = row.get(mapping.balance_col or "", "")
         amt = parse_decimal(raw)
@@ -202,19 +153,17 @@ def normalize_amount(row: Dict[str, str], mapping: ColumnMapping) -> Tuple[Optio
             return None, ["Non-numeric balance"]
         return amt, warnings
 
-    # Debit/Credit mode
+    # Debit / Credit
     d_raw = row.get(mapping.debit_col or "", "")
     c_raw = row.get(mapping.credit_col or "", "")
-
     d = parse_decimal(d_raw) or Decimal("0")
     c = parse_decimal(c_raw) or Decimal("0")
 
     if (d_raw or "").strip() != "" and (c_raw or "").strip() != "":
         warnings.append("Both debit and credit populated")
 
-    # Credit sign handling:
-    # keep    => credit positive, subtract it (normal)
-    # reverse => credit positive but should be treated negative (flip sign before calc)
+    # If credits are stored as positive but should be negative, reverse sign.
+    # keep: use c as-is; reverse: flip c
     if (mapping.credit_sign_mode or "keep").lower() == "reverse":
         c = -c
 
@@ -222,9 +171,6 @@ def normalize_amount(row: Dict[str, str], mapping: ColumnMapping) -> Tuple[Optio
     return amt, warnings
 
 
-# -------------------------
-# Validation summary
-# -------------------------
 def validate_tb(
     csv_text: str,
     has_headers: bool,
@@ -251,7 +197,6 @@ def validate_tb(
             missing_account += 1
             continue
 
-        # Determine fund code
         if mapping.fund_mode == "fund_from_account_prefix":
             fund = derive_fund_from_account(acct, mapping.fund_delimiter)
         elif mapping.fund_mode == "fund_column":
@@ -277,9 +222,7 @@ def validate_tb(
         kept += 1
         total += amt
         fund_counts[fund] = fund_counts.get(fund, 0) + 1
-
-        a = abs(amt)
-        top_abs.append((a, fund, acct, rowno))
+        top_abs.append((abs(amt), fund, acct, rowno))
 
     top_abs.sort(reverse=True, key=lambda x: x[0])
     top_abs = top_abs[:10]
