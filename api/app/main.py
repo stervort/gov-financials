@@ -1,5 +1,3 @@
-# api/app/main.py
-
 from __future__ import annotations
 
 import os
@@ -28,12 +26,12 @@ from .tb_import import (
 )
 
 # -----------------------
-# App + Templates (MUST be defined before routes)
+# App + Templates
 # -----------------------
 app = FastAPI()
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
 
-# MVP: create tables on startup (later: Alembic migrations)
+# MVP: create tables automatically
 Base.metadata.create_all(bind=engine)
 
 
@@ -43,8 +41,7 @@ def db_session() -> Session:
 
 def xlsx_bytes_to_csv_text(xlsx_bytes: bytes) -> str:
     """
-    Converts the FIRST sheet of an .xlsx into CSV text for reuse by our parsing pipeline.
-    - data_only=True: formulas -> calculated values
+    Converts the FIRST sheet of an .xlsx into CSV text for reuse by our mapping pipeline.
     """
     wb = load_workbook(filename=io.BytesIO(xlsx_bytes), data_only=True, read_only=True)
     ws = wb.worksheets[0]
@@ -65,7 +62,7 @@ def xlsx_bytes_to_csv_text(xlsx_bytes: bytes) -> str:
         row = [norm(r[i]) if i < len(r) else "" for i in range(max_cols)]
         table.append(row)
 
-    # Trim trailing empty columns
+    # trim trailing fully-empty columns
     while max_cols > 1 and all((row[max_cols - 1] == "" for row in table)):
         max_cols -= 1
         table = [row[:max_cols] for row in table]
@@ -102,10 +99,9 @@ async def tb_upload(request: Request, file: UploadFile):
             {"request": request, "message": "Please upload an Excel .xlsx trial balance file."},
         )
 
-    # Convert Excel -> CSV text
     content = xlsx_bytes_to_csv_text(raw)
 
-    # Locked assumptions for MVP
+    # Locked assumptions for XLSX wizard
     has_headers_bool = True
     delimiter_used = ","
     header_row_used = 1
@@ -137,7 +133,6 @@ async def tb_upload(request: Request, file: UploadFile):
             "filename": filename,
             "headers": headers,
             "rows": rows,
-            # unused by map.html now (locked hidden inputs), but harmless
             "has_headers": True,
             "delimiter": ",",
             "header_row": 1,
@@ -154,7 +149,7 @@ def tb_validate(
     request: Request,
     upload_id: int = Form(...),
 
-    # Locked XLSX-only wizard state (still posted)
+    # Locked XLSX state (still posted by template)
     has_headers: int = Form(...),
     delimiter: str = Form(...),
     header_row: int = Form(...),
@@ -167,9 +162,9 @@ def tb_validate(
     balance_col: str = Form(""),
     debit_col: str = Form(""),
     credit_col: str = Form(""),
-    credit_sign_mode: str = Form("keep"),  # "keep" | "reverse"
+    credit_sign_mode: str = Form("keep"),  # keep | reverse
 
-    fund_mode: str = Form(...),  # "fund_from_account_prefix" | "fund_column" | "single_fund"
+    fund_mode: str = Form(...),
     fund_col: str = Form(""),
     fund_delimiter: str = Form("-"),
 ):
@@ -187,7 +182,7 @@ def tb_validate(
         credit_sign_mode=(credit_sign_mode or "keep").strip().lower(),
         fund_mode=fund_mode,
         fund_col=fund_col if fund_mode == "fund_column" else None,
-        fund_delimiter=fund_delimiter,
+        fund_delimiter=fund_delimiter or "-",
     )
 
     report = validate_tb(
@@ -226,12 +221,10 @@ def tb_funds(
     request: Request,
     upload_id: int = Form(...),
 
-    # Locked XLSX-only wizard state
     has_headers: int = Form(...),
     delimiter: str = Form(...),
     header_row: int = Form(...),
 
-    # mapping carry-forward
     account_col: str = Form(...),
     desc_col: str = Form(""),
     amount_mode: str = Form(...),
@@ -260,7 +253,7 @@ def tb_funds(
         credit_sign_mode=(credit_sign_mode or "keep").strip().lower(),
         fund_mode=fund_mode,
         fund_col=fund_col if fund_mode == "fund_column" else None,
-        fund_delimiter=fund_delimiter,
+        fund_delimiter=fund_delimiter or "-",
     )
 
     report = validate_tb(
@@ -292,6 +285,7 @@ def tb_funds(
         )
 
     fund_codes = sorted(report["fund_counts"].keys())
+
     return templates.TemplateResponse(
         "funds.html",
         {
@@ -342,7 +336,7 @@ async def tb_import_commit(request: Request):
         credit_sign_mode=credit_sign_mode,
         fund_mode=fund_mode,
         fund_col=fund_col if fund_mode == "fund_column" else None,
-        fund_delimiter=fund_delimiter,
+        fund_delimiter=fund_delimiter or "-",
     )
 
     with db_session() as db:
@@ -360,8 +354,11 @@ async def tb_import_commit(request: Request):
         db.commit()
         db.refresh(tbi)
 
+        # ----------------
         # Funds
+        # ----------------
         fund_cache: Dict[str, Fund] = {}
+
         for k, v in form.items():
             if k.startswith("fund_name__"):
                 code = k.split("__", 1)[1]
@@ -381,7 +378,9 @@ async def tb_import_commit(request: Request):
 
         db.flush()
 
-        # Accounts + lines
+        # ----------------
+        # Accounts + Lines
+        # ----------------
         acct_cache: Dict[str, Account] = {}
         imported_lines = 0
 
