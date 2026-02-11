@@ -1,37 +1,49 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Gov Financials</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 24px; }
-    .card { border: 1px solid #ddd; padding: 16px; border-radius: 8px; margin-bottom: 16px; }
-    .row { display: flex; gap: 16px; }
-    .col { flex: 1; }
-    table { border-collapse: collapse; width: 100%; }
-    th, td { border: 1px solid #ddd; padding: 8px; }
-    th { background: #f6f6f6; }
-    .btn { display: inline-block; padding: 8px 12px; border: 1px solid #333; border-radius: 6px; text-decoration: none; }
-    .btn-primary { background: #111; color: #fff; border-color: #111; }
-    .warn { background: #fff3cd; border: 1px solid #ffeeba; padding: 12px; border-radius: 6px; }
-    .banner { background: #f2f7ff; border: 1px solid #d7e6ff; padding: 10px 12px; border-radius: 8px; margin-bottom: 16px; }
-    .banner small { opacity: .8; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; background: #f6f7fb; }
+    header { background: #0b1b33; color: white; padding: 14px 18px; }
+    header .top { display:flex; justify-content: space-between; align-items:center; gap: 12px; flex-wrap: wrap; }
+    header .brand { font-weight: 700; letter-spacing: .2px; }
+    header .meta { font-size: 12px; opacity: .95; display:flex; gap: 18px; flex-wrap: wrap; }
+    main { padding: 18px; max-width: 1100px; margin: 0 auto; }
+    .card { background: white; border: 1px solid #e7e9f2; border-radius: 10px; padding: 16px; margin-bottom: 14px; box-shadow: 0 1px 0 rgba(0,0,0,.03); }
+    .row { display:flex; gap: 14px; flex-wrap: wrap; }
+    .col { flex: 1; min-width: 240px; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { border: 1px solid #e7e9f2; padding: 8px; text-align: left; vertical-align: top; }
+    th { background: #f2f4fb; }
+    .btn { display:inline-block; padding: 9px 12px; border-radius: 8px; border: 1px solid #cfd6f0; background: #fff; cursor: pointer; text-decoration:none; color:#0b1b33; }
+    .btn-primary { background: #1f56ff; border-color: #1f56ff; color: white; }
+    .btn-danger { background: #ff2b2b; border-color: #ff2b2b; color: white; }
+    .warn { padding: 10px 12px; background: #fff4e5; border: 1px solid #ffd49a; border-radius: 8px; }
+    .err { padding: 10px 12px; background: #ffeaea; border: 1px solid #ffb3b3; border-radius: 8px; }
+    input[type="text"], input[type="date"], select { padding: 8px; border: 1px solid #cfd6f0; border-radius: 8px; width: 100%; box-sizing: border-box; }
+    input[type="file"] { width: 100%; }
+    hr { border: 0; border-top: 1px solid #e7e9f2; }
+    .muted { font-size: 12px; opacity: .75; }
   </style>
 </head>
 <body>
-
-  {% if client and binder %}
-  <div class="banner">
-    <div><b>Client:</b> {{ client.client_name }}</div>
-    <div><b>Binder:</b> FY {{ binder.fiscal_year or binder.period_end.year }} — Period end {{ binder.period_end }}</div>
-    <div style="margin-top:8px;">
-      <a class="btn" href="/b/{{ binder.id }}">Binder Home</a>
-      <a class="btn" href="/b/{{ binder.id }}/tb/upload">Upload TB</a>
-      <a class="btn" href="/">Change Client/Binder</a>
+  <header>
+    <div class="top">
+      <div class="brand">Gov Financials</div>
+      <div class="meta">
+        <div><b>Entity:</b> {{ entity_name or "—" }}</div>
+        <div><b>Period End:</b> {{ period_end or "—" }}</div>
+        {% if binder_label %}
+          <div><b>Binder:</b> {{ binder_label }}</div>
+        {% endif %}
+      </div>
     </div>
-  </div>
-  {% endif %}
+  </header>
 
-  {% block content %}{% endblock %}
+  <main>
+    {% block content %}{% endblock %}
+  </main>
 </body>
 </html>
