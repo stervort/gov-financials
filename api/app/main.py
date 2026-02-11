@@ -1,6 +1,11 @@
+# api/app/main.py
+
 from __future__ import annotations
+
 import os
 from decimal import Decimal
+from typing import Optional
+
 from fastapi import FastAPI, Request, UploadFile, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -9,7 +14,14 @@ from sqlalchemy.orm import Session
 
 from .db import engine, SessionLocal
 from .models import Base, UploadedFile, Fund, Account, TBImport, TBLine
-from .tb_import import read_csv_preview, ColumnMapping, validate_tb
+from .tb_import import (
+    read_csv_preview,
+    ColumnMapping,
+    validate_tb,
+    iter_csv_rows,
+    derive_fund_from_account,
+    normalize_amount,
+)
 
 app = FastAPI()
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
@@ -17,17 +29,27 @@ templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "t
 # MVP: create tables on startup (later: Alembic migrations)
 Base.metadata.create_all(bind=engine)
 
+
 def db_session() -> Session:
     return SessionLocal()
 
-@app.get("/", response_class=HTMLResponse)
-def home(request: Request):
-    return templates.TemplateResponse("upload.html", {"request": request, "message": None})
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
+
+@app.get("/", response_class=HTMLResponse)
+def upload_page(request: Request):
+    return templates.TemplateResponse(
+        "upload.html",
+        {"request": request, "message": None},
+    )
+
+
+# -----------------------
+# Step 1: Upload & Preview
+# -----------------------
 @app.post("/tb/upload", response_class=HTMLResponse)
 async def tb_upload(
     request: Request,
@@ -37,26 +59,44 @@ async def tb_upload(
     header_row: int = Form(1),
 ):
     content = (await file.read()).decode("utf-8", errors="replace")
+
     with db_session() as db:
-        uf = UploadedFile(filename=file.filename, content_type=file.content_type or "text/csv", content_text=content)
+        uf = UploadedFile(
+            filename=file.filename,
+            content_type=file.content_type or "text/csv",
+            content_text=content,
+        )
         db.add(uf)
         db.commit()
         db.refresh(uf)
 
-    headers, rows = read_csv_preview(content, has_headers=(has_headers == "on"), header_row=header_row, delimiter=delimiter, max_rows=50)
+    headers, rows = read_csv_preview(
+        content,
+        has_headers=(has_headers == "on"),
+        header_row=header_row,
+        delimiter=delimiter,
+        max_rows=50,
+    )
 
-    return templates.TemplateResponse("map.html", {
-        "request": request,
-        "upload_id": uf.id,
-        "filename": file.filename,
-        "headers": headers,
-        "rows": rows,
-        "has_headers": (has_headers == "on"),
-        "delimiter": delimiter,
-        "header_row": header_row,
-        "message": None,
-    })
+    return templates.TemplateResponse(
+        "map.html",
+        {
+            "request": request,
+            "upload_id": uf.id,
+            "filename": file.filename,
+            "headers": headers,
+            "rows": rows,
+            "has_headers": (has_headers == "on"),
+            "delimiter": delimiter,
+            "header_row": header_row,
+            "message": None,
+        },
+    )
 
+
+# -----------------------
+# Step 2: Validate Mapping
+# -----------------------
 @app.post("/tb/validate", response_class=HTMLResponse)
 def tb_validate(
     request: Request,
@@ -64,20 +104,19 @@ def tb_validate(
     has_headers: int = Form(...),
     delimiter: str = Form(...),
     header_row: int = Form(...),
-
     account_col: str = Form(...),
     desc_col: str = Form(""),
-    amount_mode: str = Form(...),  # signed | dc
+    amount_mode: str = Form(...),  # "signed" | "dc"
     balance_col: str = Form(""),
     debit_col: str = Form(""),
     credit_col: str = Form(""),
-
-    fund_mode: str = Form(...),  # fund_from_account_prefix | fund_column | single_fund
+    fund_mode: str = Form(...),  # "fund_from_account_prefix" | "fund_column" | "single_fund"
     fund_col: str = Form(""),
     fund_delimiter: str = Form("-"),
 ):
     with db_session() as db:
-        csv_text = db.get(UploadedFile, upload_id).content_text
+        uf = db.get(UploadedFile, upload_id)
+        csv_text = uf.content_text if uf else ""
 
     mapping = ColumnMapping(
         account_col=account_col,
@@ -99,23 +138,28 @@ def tb_validate(
         mapping=mapping,
     )
 
-    # Net-to-zero warning logic
     tolerance = Decimal("1.00")
-    nets_to_zero = abs(report["total_net"]) <= tolerance
+    nets_to_zero = abs(Decimal(str(report["total_net"]))) <= tolerance
 
-    # Pass mapping forward in hidden fields
-    return templates.TemplateResponse("validate.html", {
-        "request": request,
-        "upload_id": upload_id,
-        "mapping": mapping,
-        "has_headers": bool(has_headers),
-        "delimiter": delimiter,
-        "header_row": int(header_row),
-        "report": report,
-        "tolerance": tolerance,
-        "nets_to_zero": nets_to_zero,
-    })
+    return templates.TemplateResponse(
+        "validate.html",
+        {
+            "request": request,
+            "upload_id": upload_id,
+            "mapping": mapping,
+            "has_headers": bool(has_headers),
+            "delimiter": delimiter,
+            "header_row": int(header_row),
+            "report": report,
+            "tolerance": tolerance,
+            "nets_to_zero": nets_to_zero,
+        },
+    )
 
+
+# ----------------------------------------
+# Step 3: Funds Dictionary (Confirm Funds)
+# ----------------------------------------
 @app.post("/tb/funds", response_class=HTMLResponse)
 def tb_funds(
     request: Request,
@@ -123,23 +167,20 @@ def tb_funds(
     has_headers: int = Form(...),
     delimiter: str = Form(...),
     header_row: int = Form(...),
-
     account_col: str = Form(...),
     desc_col: str = Form(""),
     amount_mode: str = Form(...),
     balance_col: str = Form(""),
     debit_col: str = Form(""),
     credit_col: str = Form(""),
-
     fund_mode: str = Form(...),
     fund_col: str = Form(""),
     fund_delimiter: str = Form("-"),
-
     allow_unbalanced: str = Form("off"),
 ):
-    # Re-run validation to get fund list (fast enough for MVP)
     with db_session() as db:
-        csv_text = db.get(UploadedFile, upload_id).content_text
+        uf = db.get(UploadedFile, upload_id)
+        csv_text = uf.content_text if uf else ""
 
     mapping = ColumnMapping(
         account_col=account_col,
@@ -153,49 +194,79 @@ def tb_funds(
         fund_delimiter=fund_delimiter,
     )
 
-    report = validate_tb(csv_text, bool(has_headers), int(header_row), delimiter, mapping)
-    tolerance = Decimal("1.00")
-    nets_to_zero = abs(report["total_net"]) <= tolerance
+    report = validate_tb(
+        csv_text=csv_text,
+        has_headers=bool(has_headers),
+        header_row=int(header_row),
+        delimiter=delimiter,
+        mapping=mapping,
+    )
 
+    tolerance = Decimal("1.00")
+    nets_to_zero = abs(Decimal(str(report["total_net"]))) <= tolerance
+
+    # If unbalanced, require explicit override
     if (not nets_to_zero) and allow_unbalanced != "on":
-        # bounce back to validation screen with warning
-        return RedirectResponse(url="/", status_code=303)
+        # Re-render validate screen with a stronger message
+        return templates.TemplateResponse(
+            "validate.html",
+            {
+                "request": request,
+                "upload_id": upload_id,
+                "mapping": mapping,
+                "has_headers": bool(has_headers),
+                "delimiter": delimiter,
+                "header_row": int(header_row),
+                "report": report,
+                "tolerance": tolerance,
+                "nets_to_zero": nets_to_zero,
+                "force_unbalanced_warning": True,
+            },
+        )
 
     fund_codes = sorted(report["fund_counts"].keys())
-    return templates.TemplateResponse("funds.html", {
-        "request": request,
-        "upload_id": upload_id,
-        "has_headers": int(has_headers),
-        "delimiter": delimiter,
-        "header_row": int(header_row),
-        "mapping": mapping,
-        "fund_codes": fund_codes,
-        "fund_counts": report["fund_counts"],
-    })
+    return templates.TemplateResponse(
+        "funds.html",
+        {
+            "request": request,
+            "upload_id": upload_id,
+            "has_headers": int(has_headers),
+            "delimiter": delimiter,
+            "header_row": int(header_row),
+            "mapping": mapping,
+            "fund_codes": fund_codes,
+            "fund_counts": report["fund_counts"],
+        },
+    )
 
+
+# -----------------------
+# Step 4: Commit TB Import
+# -----------------------
 @app.post("/tb/import", response_class=HTMLResponse)
-def tb_import_commit(request: Request):
-    form = dict(request.form())  # type: ignore
+async def tb_import_commit(request: Request):
+    form = await request.form()
+    form = dict(form)
 
     upload_id = int(form["upload_id"])
     has_headers = bool(int(form["has_headers"]))
     delimiter = form["delimiter"]
     header_row = int(form["header_row"])
 
-    # mapping
+    # Mapping selections
     account_col = form["account_col"]
-    desc_col = form.get("desc_col") or ""
+    desc_col = (form.get("desc_col") or "").strip()
     amount_mode = form["amount_mode"]
-    balance_col = form.get("balance_col") or ""
-    debit_col = form.get("debit_col") or ""
-    credit_col = form.get("credit_col") or ""
+    balance_col = (form.get("balance_col") or "").strip()
+    debit_col = (form.get("debit_col") or "").strip()
+    credit_col = (form.get("credit_col") or "").strip()
     fund_mode = form["fund_mode"]
-    fund_col = form.get("fund_col") or ""
-    fund_delimiter = form.get("fund_delimiter") or "-"
+    fund_col = (form.get("fund_col") or "").strip()
+    fund_delimiter = (form.get("fund_delimiter") or "-").strip()
 
     mapping = ColumnMapping(
         account_col=account_col,
-        desc_col=desc_col if desc_col.strip() else None,
+        desc_col=desc_col if desc_col else None,
         mode=amount_mode,
         balance_col=balance_col if amount_mode == "signed" else None,
         debit_col=debit_col if amount_mode == "dc" else None,
@@ -205,28 +276,30 @@ def tb_import_commit(request: Request):
         fund_delimiter=fund_delimiter,
     )
 
-    # fund dictionary selections
-    # fields like fund_type__10, fund_name__10
     with db_session() as db:
         uf = db.get(UploadedFile, upload_id)
+        if not uf:
+            return templates.TemplateResponse(
+                "complete.html",
+                {"request": request, "import_name": "Import failed", "imported_lines": 0},
+            )
+
         csv_text = uf.content_text
 
-        # Create TBImport
+        # Create TBImport record
         tbi = TBImport(import_name=f"TB Import - {uf.filename}", uploaded_file_id=upload_id)
         db.add(tbi)
         db.commit()
         db.refresh(tbi)
 
-        # Build fund and account caches
-        fund_cache = {}
-        acct_cache = {}
-
-        # Create funds from form selections
+        # Create/update funds from fund dictionary form inputs
+        fund_cache: dict[str, Fund] = {}
         for k, v in form.items():
             if k.startswith("fund_name__"):
                 code = k.split("__", 1)[1]
-                name = v
-                ftype = form.get(f"fund_type__{code}", "")
+                name = str(v).strip()
+                ftype = str(form.get(f"fund_type__{code}", "")).strip()
+
                 existing = db.scalar(select(Fund).where(Fund.fund_code == code))
                 if not existing:
                     existing = Fund(fund_code=code, fund_name=name, fund_type=ftype)
@@ -235,12 +308,13 @@ def tb_import_commit(request: Request):
                 else:
                     existing.fund_name = name
                     existing.fund_type = ftype
+
                 fund_cache[code] = existing
 
         db.flush()
 
-        # Parse and import rows
-        from .tb_import import iter_csv_rows, derive_fund_from_account, normalize_amount
+        # Account cache
+        acct_cache: dict[str, Account] = {}
 
         imported_lines = 0
         for rowno, row in iter_csv_rows(csv_text, has_headers, header_row, delimiter):
@@ -248,6 +322,7 @@ def tb_import_commit(request: Request):
             if mapping.ignore_blank_account and acct == "":
                 continue
 
+            # Determine fund code
             if mapping.fund_mode == "fund_from_account_prefix":
                 fund_code = derive_fund_from_account(acct, mapping.fund_delimiter)
             elif mapping.fund_mode == "fund_column":
@@ -264,13 +339,15 @@ def tb_import_commit(request: Request):
             if mapping.ignore_zero and amt == 0:
                 continue
 
+            # Description
             desc = ""
             if mapping.desc_col:
                 desc = (row.get(mapping.desc_col, "") or "").strip()
 
-            # Fund record must exist (should, from funds screen); create if missing
+            # Fund record
             fund = fund_cache.get(fund_code) or db.scalar(select(Fund).where(Fund.fund_code == fund_code))
             if not fund:
+                # fallback (should be rare if funds screen was completed)
                 fund = Fund(fund_code=fund_code, fund_name="", fund_type="")
                 db.add(fund)
                 db.flush()
@@ -284,6 +361,7 @@ def tb_import_commit(request: Request):
                 db.flush()
                 acct_cache[acct] = acct_obj
 
+            # Create TB line
             line = TBLine(
                 tb_import_id=tbi.id,
                 fund_id=fund.id,
@@ -297,8 +375,11 @@ def tb_import_commit(request: Request):
 
         db.commit()
 
-    return templates.TemplateResponse("complete.html", {
-        "request": request,
-        "import_name": f"TB Import - {uf.filename}",
-        "imported_lines": imported_lines,
-    })
+    return templates.TemplateResponse(
+        "complete.html",
+        {
+            "request": request,
+            "import_name": f"TB Import - {uf.filename}",
+            "imported_lines": imported_lines,
+        },
+    )
