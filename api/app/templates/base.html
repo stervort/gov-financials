@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>TB Import Wizard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; max-width: 1100px; }
+    .card { border: 1px solid #ddd; padding: 16px; border-radius: 8px; margin: 12px 0; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #eee; padding: 6px 8px; font-size: 12px; }
+    th { background: #fafafa; text-align: left; }
+    .row { display: flex; gap: 16px; }
+    .col { flex: 1; }
+    .btn { padding: 10px 14px; border: 1px solid #333; background: #fff; cursor: pointer; border-radius: 6px; }
+    .btn-primary { background: #222; color: white; border-color: #222; }
+    .warn { background: #fff7e6; border: 1px solid #ffd591; padding: 10px; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <h1>TB Import Wizard</h1>
+  {% block content %}{% endblock %}
+</body>
+</html>
