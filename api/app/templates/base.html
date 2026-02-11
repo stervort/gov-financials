@@ -1,24 +1,37 @@
 <!doctype html>
 <html>
 <head>
-  <meta charset="utf-8" />
-  <title>TB Import Wizard</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta charset="utf-8">
+  <title>Gov Financials</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 24px; max-width: 1100px; }
-    .card { border: 1px solid #ddd; padding: 16px; border-radius: 8px; margin: 12px 0; }
-    table { border-collapse: collapse; width: 100%; }
-    th, td { border: 1px solid #eee; padding: 6px 8px; font-size: 12px; }
-    th { background: #fafafa; text-align: left; }
+    body { font-family: Arial, sans-serif; margin: 24px; }
+    .card { border: 1px solid #ddd; padding: 16px; border-radius: 8px; margin-bottom: 16px; }
     .row { display: flex; gap: 16px; }
     .col { flex: 1; }
-    .btn { padding: 10px 14px; border: 1px solid #333; background: #fff; cursor: pointer; border-radius: 6px; }
-    .btn-primary { background: #222; color: white; border-color: #222; }
-    .warn { background: #fff7e6; border: 1px solid #ffd591; padding: 10px; border-radius: 6px; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #ddd; padding: 8px; }
+    th { background: #f6f6f6; }
+    .btn { display: inline-block; padding: 8px 12px; border: 1px solid #333; border-radius: 6px; text-decoration: none; }
+    .btn-primary { background: #111; color: #fff; border-color: #111; }
+    .warn { background: #fff3cd; border: 1px solid #ffeeba; padding: 12px; border-radius: 6px; }
+    .banner { background: #f2f7ff; border: 1px solid #d7e6ff; padding: 10px 12px; border-radius: 8px; margin-bottom: 16px; }
+    .banner small { opacity: .8; }
   </style>
 </head>
 <body>
-  <h1>TB Import Wizard</h1>
+
+  {% if client and binder %}
+  <div class="banner">
+    <div><b>Client:</b> {{ client.client_name }}</div>
+    <div><b>Binder:</b> FY {{ binder.fiscal_year or binder.period_end.year }} — Period end {{ binder.period_end }}</div>
+    <div style="margin-top:8px;">
+      <a class="btn" href="/b/{{ binder.id }}">Binder Home</a>
+      <a class="btn" href="/b/{{ binder.id }}/tb/upload">Upload TB</a>
+      <a class="btn" href="/">Change Client/Binder</a>
+    </div>
+  </div>
+  {% endif %}
+
   {% block content %}{% endblock %}
 </body>
 </html>
