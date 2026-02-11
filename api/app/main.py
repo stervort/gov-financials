@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import os
+import io
+import csv
 from decimal import Decimal
-from typing import Optional
+from typing import Dict
 
 from fastapi import FastAPI, Request, UploadFile, Form
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+
+from openpyxl import load_workbook
 
 from .db import engine, SessionLocal
 from .models import Base, UploadedFile, Fund, Account, TBImport, TBLine
@@ -34,6 +38,44 @@ def db_session() -> Session:
     return SessionLocal()
 
 
+def xlsx_bytes_to_csv_text(xlsx_bytes: bytes) -> str:
+    """
+    Converts the FIRST sheet of an .xlsx into CSV text for reuse by our CSV pipeline.
+    - Uses the first row as headers.
+    - Uses data_only=True so formulas show calculated values.
+    """
+    wb = load_workbook(filename=io.BytesIO(xlsx_bytes), data_only=True, read_only=True)
+    ws = wb.worksheets[0]
+
+    rows = list(ws.iter_rows(values_only=True))
+    if not rows:
+        return ""
+
+    # Determine max columns
+    max_cols = max(len(r) for r in rows)
+
+    def norm(v) -> str:
+        if v is None:
+            return ""
+        return str(v)
+
+    table = []
+    for r in rows:
+        row = [norm(r[i]) if i < len(r) else "" for i in range(max_cols)]
+        table.append(row)
+
+    # Trim trailing empty columns
+    while max_cols > 1 and all((row[max_cols - 1] == "" for row in table)):
+        max_cols -= 1
+        table = [row[:max_cols] for row in table]
+
+    out = io.StringIO()
+    w = csv.writer(out)
+    for row in table:
+        w.writerow(row)
+    return out.getvalue()
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -41,10 +83,7 @@ def health():
 
 @app.get("/", response_class=HTMLResponse)
 def upload_page(request: Request):
-    return templates.TemplateResponse(
-        "upload.html",
-        {"request": request, "message": None},
-    )
+    return templates.TemplateResponse("upload.html", {"request": request, "message": None})
 
 
 # -----------------------
@@ -54,16 +93,35 @@ def upload_page(request: Request):
 async def tb_upload(
     request: Request,
     file: UploadFile,
-    has_headers: str = Form("on"),
+    has_headers: str = Form("1"),  # "1" checked, "0" unchecked
     delimiter: str = Form(","),
     header_row: int = Form(1),
 ):
-    content = (await file.read()).decode("utf-8", errors="replace")
+    raw = await file.read()
+    filename = file.filename or "upload"
+    lower = filename.lower()
+
+    # Checkbox parsing: works because upload.html always posts 0 or 1
+    has_headers_bool = (has_headers == "1")
+
+    # Excel handling: convert to CSV-text and keep our existing pipeline
+    if lower.endswith(".xlsx"):
+        content = xlsx_bytes_to_csv_text(raw)
+        # For now, force Excel assumptions (can make configurable later)
+        has_headers_bool = True
+        delimiter_used = ","
+        header_row_used = 1
+        content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    else:
+        content = raw.decode("utf-8", errors="replace")
+        delimiter_used = delimiter
+        header_row_used = header_row
+        content_type = file.content_type or "text/csv"
 
     with db_session() as db:
         uf = UploadedFile(
-            filename=file.filename,
-            content_type=file.content_type or "text/csv",
+            filename=filename,
+            content_type=content_type,
             content_text=content,
         )
         db.add(uf)
@@ -72,9 +130,9 @@ async def tb_upload(
 
     headers, rows = read_csv_preview(
         content,
-        has_headers=(has_headers == "on"),
-        header_row=header_row,
-        delimiter=delimiter,
+        has_headers=has_headers_bool,
+        header_row=header_row_used,
+        delimiter=delimiter_used,
         max_rows=50,
     )
 
@@ -83,12 +141,12 @@ async def tb_upload(
         {
             "request": request,
             "upload_id": uf.id,
-            "filename": file.filename,
+            "filename": filename,
             "headers": headers,
             "rows": rows,
-            "has_headers": (has_headers == "on"),
-            "delimiter": delimiter,
-            "header_row": header_row,
+            "has_headers": has_headers_bool,
+            "delimiter": delimiter_used,
+            "header_row": header_row_used,
             "message": None,
         },
     )
@@ -205,9 +263,7 @@ def tb_funds(
     tolerance = Decimal("1.00")
     nets_to_zero = abs(Decimal(str(report["total_net"]))) <= tolerance
 
-    # If unbalanced, require explicit override
     if (not nets_to_zero) and allow_unbalanced != "on":
-        # Re-render validate screen with a stronger message
         return templates.TemplateResponse(
             "validate.html",
             {
@@ -253,7 +309,6 @@ async def tb_import_commit(request: Request):
     delimiter = form["delimiter"]
     header_row = int(form["header_row"])
 
-    # Mapping selections
     account_col = form["account_col"]
     desc_col = (form.get("desc_col") or "").strip()
     amount_mode = form["amount_mode"]
@@ -286,14 +341,12 @@ async def tb_import_commit(request: Request):
 
         csv_text = uf.content_text
 
-        # Create TBImport record
         tbi = TBImport(import_name=f"TB Import - {uf.filename}", uploaded_file_id=upload_id)
         db.add(tbi)
         db.commit()
         db.refresh(tbi)
 
-        # Create/update funds from fund dictionary form inputs
-        fund_cache: dict[str, Fund] = {}
+        fund_cache: Dict[str, Fund] = {}
         for k, v in form.items():
             if k.startswith("fund_name__"):
                 code = k.split("__", 1)[1]
@@ -313,16 +366,14 @@ async def tb_import_commit(request: Request):
 
         db.flush()
 
-        # Account cache
-        acct_cache: dict[str, Account] = {}
-
+        acct_cache: Dict[str, Account] = {}
         imported_lines = 0
+
         for rowno, row in iter_csv_rows(csv_text, has_headers, header_row, delimiter):
             acct = (row.get(mapping.account_col, "") or "").strip()
             if mapping.ignore_blank_account and acct == "":
                 continue
 
-            # Determine fund code
             if mapping.fund_mode == "fund_from_account_prefix":
                 fund_code = derive_fund_from_account(acct, mapping.fund_delimiter)
             elif mapping.fund_mode == "fund_column":
@@ -339,21 +390,17 @@ async def tb_import_commit(request: Request):
             if mapping.ignore_zero and amt == 0:
                 continue
 
-            # Description
             desc = ""
             if mapping.desc_col:
                 desc = (row.get(mapping.desc_col, "") or "").strip()
 
-            # Fund record
             fund = fund_cache.get(fund_code) or db.scalar(select(Fund).where(Fund.fund_code == fund_code))
             if not fund:
-                # fallback (should be rare if funds screen was completed)
                 fund = Fund(fund_code=fund_code, fund_name="", fund_type="")
                 db.add(fund)
                 db.flush()
                 fund_cache[fund_code] = fund
 
-            # Account record
             acct_obj = acct_cache.get(acct) or db.scalar(select(Account).where(Account.account_number == acct))
             if not acct_obj:
                 acct_obj = Account(account_number=acct, account_name=desc[:255] if desc else "")
@@ -361,7 +408,6 @@ async def tb_import_commit(request: Request):
                 db.flush()
                 acct_cache[acct] = acct_obj
 
-            # Create TB line
             line = TBLine(
                 tb_import_id=tbi.id,
                 fund_id=fund.id,
