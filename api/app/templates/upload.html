@@ -2,19 +2,24 @@
 
 {% block content %}
 <div class="card">
-  <h2>Upload Trial Balance (CSV)</h2>
+  <h2>Upload Trial Balance (CSV or Excel)</h2>
 
   <form action="/tb/upload" method="post" enctype="multipart/form-data">
 
     <div class="row">
 
       <div class="col">
-        <label>CSV file</label><br>
-        <input type="file" name="file" accept=".csv,text/csv" required>
+        <label>File</label><br>
+        <input
+          type="file"
+          name="file"
+          accept=".csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
+          required
+        >
       </div>
 
       <div class="col">
-        <label>Delimiter</label><br>
+        <label>Delimiter (CSV only)</label><br>
         <select name="delimiter">
           <option value="," selected>Comma (,)</option>
           <option value="	">Tab</option>
@@ -23,14 +28,17 @@
       </div>
 
       <div class="col">
-        <label>Header row number</label><br>
+        <label>Header row number (CSV only)</label><br>
         <input type="number" name="header_row" value="1" min="1">
       </div>
 
       <div class="col">
         <label>&nbsp;</label><br>
+
+        <!-- IMPORTANT: unchecked checkboxes don't submit, so force a value -->
+        <input type="hidden" name="has_headers" value="0">
         <label>
-          <input type="checkbox" name="has_headers" checked>
+          <input type="checkbox" name="has_headers" value="1" checked>
           File has headers
         </label>
       </div>
@@ -44,6 +52,12 @@
     </button>
 
   </form>
+
+  <p style="font-size:12px; opacity:.8; margin-top:10px;">
+    Note: For Excel (.xlsx), we currently read the <b>first sheet</b> and treat the <b>first row</b> as headers.
+  </p>
 </div>
 {% endblock %}
+
+
 
