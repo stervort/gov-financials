@@ -4,8 +4,11 @@
 <div class="card">
   <h2>Upload Trial Balance (Excel .xlsx)</h2>
 
-  <form action="/tb/upload" method="post" enctype="multipart/form-data">
+  {% if message %}
+    <div class="warn">{{ message }}</div>
+  {% endif %}
 
+  <form action="/b/{{ binder.id }}/tb/upload" method="post" enctype="multipart/form-data">
     <div class="row">
       <div class="col">
         <label>Excel file (.xlsx)</label><br>
@@ -23,7 +26,6 @@
     <button class="btn btn-primary" type="submit">
       Upload & Preview
     </button>
-
   </form>
 
   <p style="font-size:12px; opacity:.8; margin-top:10px;">
@@ -31,4 +33,3 @@
   </p>
 </div>
 {% endblock %}
-
