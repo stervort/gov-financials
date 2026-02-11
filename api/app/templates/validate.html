@@ -6,14 +6,17 @@
 
   {% if force_unbalanced_warning %}
     <div class="warn">
-      <b>TB does not net to zero.</b> Check your mapping, delimiter, headers, and amounts.
-      If you still want to continue, check “Allow unbalanced” and continue.
+      <b>TB does not net to zero.</b>
+      Check your mapping and amount columns. If you still want to continue, check “Allow unbalanced” and continue.
     </div>
   {% endif %}
 
   <div class="card">
     <p><b>Total net:</b> {{ report.total_net }}</p>
     <p><b>Nets to zero (±{{ tolerance }}):</b> {{ "YES" if nets_to_zero else "NO" }}</p>
+    <p style="font-size:12px; opacity:.8;">
+      Rows read: {{ report.rows_read }} | Rows kept: {{ report.rows_kept }}
+    </p>
   </div>
 
   <div class="card">
@@ -37,7 +40,7 @@
   </div>
 
   <form action="/tb/funds" method="post">
-    <!-- CRITICAL: carry wizard state forward exactly -->
+    <!-- Wizard state -->
     <input type="hidden" name="upload_id" value="{{ upload_id }}">
     <input type="hidden" name="has_headers" value="{{ 1 if has_headers else 0 }}">
     <input type="hidden" name="delimiter" value="{{ delimiter }}">
@@ -46,10 +49,13 @@
     <!-- mapping carry-forward -->
     <input type="hidden" name="account_col" value="{{ mapping.account_col }}">
     <input type="hidden" name="desc_col" value="{{ mapping.desc_col or '' }}">
+
     <input type="hidden" name="amount_mode" value="{{ mapping.mode }}">
     <input type="hidden" name="balance_col" value="{{ mapping.balance_col or '' }}">
     <input type="hidden" name="debit_col" value="{{ mapping.debit_col or '' }}">
     <input type="hidden" name="credit_col" value="{{ mapping.credit_col or '' }}">
+    <input type="hidden" name="credit_sign_mode" value="{{ mapping.credit_sign_mode }}">
+
     <input type="hidden" name="fund_mode" value="{{ mapping.fund_mode }}">
     <input type="hidden" name="fund_col" value="{{ mapping.fund_col or '' }}">
     <input type="hidden" name="fund_delimiter" value="{{ mapping.fund_delimiter }}">
