@@ -1,1 +1,49 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+  <h2>Upload Trial Balance (CSV)</h2>
+
+  <form action="/tb/upload" method="post" enctype="multipart/form-data">
+
+    <div class="row">
+
+      <div class="col">
+        <label>CSV file</label><br>
+        <input type="file" name="file" accept=".csv,text/csv" required>
+      </div>
+
+      <div class="col">
+        <label>Delimiter</label><br>
+        <select name="delimiter">
+          <option value="," selected>Comma (,)</option>
+          <option value="	">Tab</option>
+          <option value=";">Semicolon (;)</option>
+        </select>
+      </div>
+
+      <div class="col">
+        <label>Header row number</label><br>
+        <input type="number" name="header_row" value="1" min="1">
+      </div>
+
+      <div class="col">
+        <label>&nbsp;</label><br>
+        <label>
+          <input type="checkbox" name="has_headers" checked>
+          File has headers
+        </label>
+      </div>
+
+    </div>
+
+    <br>
+
+    <button class="btn btn-primary" type="submit">
+      Upload & Preview
+    </button>
+
+  </form>
+</div>
+{% endblock %}
 
