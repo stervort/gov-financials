@@ -2,36 +2,106 @@
 {% block content %}
 
 <div class="card">
-  <h2>Select Client + Binder</h2>
+  <h2>Select Binder</h2>
 
-  <form action="/binder/open" method="post">
+  <form method="get" action="/">
     <div class="row">
       <div class="col">
-        <label><b>Client</b></label><br>
-        <select name="client_id" required style="width:100%;">
-          <option value="" selected>(select)</option>
-          {% for c in clients %}
-            <option value="{{ c.id }}">{{ c.client_name }}</option>
-          {% endfor %}
-        </select>
+        <label>Search Entity</label>
+        <input type="text" name="q" value="{{ q or '' }}" placeholder="Search by entity name..." />
+      </div>
+      <div class="col" style="display:flex; align-items:flex-end; gap:10px;">
+        <button class="btn btn-primary" type="submit">Search</button>
+        <a class="btn" href="/">Clear</a>
+      </div>
+    </div>
+  </form>
+
+  <hr style="margin:16px 0;">
+
+  <table>
+    <thead>
+      <tr>
+        <th>Binder</th>
+        <th>Entity</th>
+        <th>Period End</th>
+        <th>Last Accessed</th>
+        <th style="width:180px;">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for b in binder_rows %}
+      <tr>
+        <td><b>{{ b.label }}</b></td>
+        <td>{{ b.entity }}</td>
+        <td>{{ b.period_end }}</td>
+        <td>{{ b.last_accessed }}</td>
+        <td>
+          <a class="btn btn-primary" href="/binder/open/{{ b.id }}">Open</a>
+          <a class="btn btn-danger" href="/binder/{{ b.id }}/delete">Delete</a>
+        </td>
+      </tr>
+      {% endfor %}
+      {% if binder_rows|length == 0 %}
+      <tr><td colspan="5" class="muted">No binders found.</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2>Create Entity</h2>
+  <form action="/entity/create" method="post">
+    <div class="row">
+      <div class="col">
+        <label><b>Entity Name</b></label>
+        <input type="text" name="entity_name" placeholder="e.g., City of Example" required />
       </div>
       <div class="col">
-        <label><b>Period end date</b></label><br>
-        <input type="date" name="period_end" required style="width:100%;">
+        <label>Address (optional)</label>
+        <input type="text" name="address" placeholder="123 Main St" />
       </div>
     </div>
 
-    <br>
-    <button class="btn btn-primary" type="submit">Open Binder</button>
+    <div class="row" style="margin-top:10px;">
+      <div class="col">
+        <label>Contact Name (optional)</label>
+        <input type="text" name="contact_name" placeholder="Jane Doe" />
+      </div>
+      <div class="col">
+        <label>Contact Email (optional)</label>
+        <input type="text" name="contact_email" placeholder="jane@example.gov" />
+      </div>
+    </div>
+
+    <br/>
+    <button class="btn btn-primary" type="submit">Create Entity</button>
   </form>
 </div>
 
 <div class="card">
-  <h2>Create Client</h2>
-  <form action="/client/create" method="post">
-    <input type="text" name="client_name" placeholder="e.g., City of Springfield" style="width:100%;" required>
-    <br><br>
-    <button class="btn btn-primary" type="submit">Create Client</button>
+  <h2>Create Binder</h2>
+  <p class="muted">Binders are stored as: Entity (Period End). Rollforward will come next.</p>
+
+  <form action="/binder/create" method="post">
+    <div class="row">
+      <div class="col">
+        <label><b>Entity</b></label>
+        <select name="entity_id" required>
+          <option value="" selected>(select)</option>
+          {% for e in entities %}
+            <option value="{{ e.id }}">{{ e.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col">
+        <label><b>Period End</b></label>
+        <input type="date" name="period_end" required />
+      </div>
+    </div>
+
+    <br/>
+    <button class="btn btn-primary" type="submit">Create Binder</button>
   </form>
 </div>
 
@@ -40,19 +110,29 @@
   <table>
     <thead>
       <tr>
-        <th>Client</th>
+        <th>Binder</th>
+        <th>Entity</th>
         <th>Period End</th>
-        <th></th>
+        <th>Last Accessed</th>
+        <th style="width:180px;">Actions</th>
       </tr>
     </thead>
     <tbody>
       {% for b in recent_binders %}
       <tr>
-        <td>{{ b.client.client_name }}</td>
+        <td><b>{{ b.label }}</b></td>
+        <td>{{ b.entity }}</td>
         <td>{{ b.period_end }}</td>
-        <td><a class="btn" href="/b/{{ b.id }}">Open</a></td>
+        <td>{{ b.last_accessed }}</td>
+        <td>
+          <a class="btn btn-primary" href="/binder/open/{{ b.id }}">Open</a>
+          <a class="btn btn-danger" href="/binder/{{ b.id }}/delete">Delete</a>
+        </td>
       </tr>
       {% endfor %}
+      {% if recent_binders|length == 0 %}
+      <tr><td colspan="5" class="muted">No recent binders yet.</td></tr>
+      {% endif %}
     </tbody>
   </table>
 </div>
