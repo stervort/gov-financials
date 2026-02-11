@@ -3,18 +3,20 @@
 
 <div class="card">
   <h2>Validate Import</h2>
+  <p><b>Binder:</b> {{ binder_label }}</p>
 
   {% if force_unbalanced_warning %}
     <div class="warn">
       <b>TB does not net to zero.</b>
       Check your mapping and amount columns. If you still want to continue, check “Allow unbalanced” and continue.
     </div>
+    <br/>
   {% endif %}
 
   <div class="card">
     <p><b>Total net:</b> {{ report.total_net }}</p>
     <p><b>Nets to zero (±{{ tolerance }}):</b> {{ "YES" if nets_to_zero else "NO" }}</p>
-    <p style="font-size:12px; opacity:.8;">
+    <p class="muted">
       Rows read: {{ report.rows_read }} | Rows kept: {{ report.rows_kept }}
     </p>
   </div>
@@ -39,7 +41,9 @@
     </table>
   </div>
 
-  <form action="/b/{{ binder.id }}/tb/funds" method="post">
+  <form action="/tb/funds" method="post">
+    <input type="hidden" name="binder_id" value="{{ binder_id }}">
+
     <input type="hidden" name="upload_id" value="{{ upload_id }}">
     <input type="hidden" name="has_headers" value="{{ 1 if has_headers else 0 }}">
     <input type="hidden" name="delimiter" value="{{ delimiter }}">
@@ -68,7 +72,7 @@
     {% endif %}
 
     <button class="btn btn-primary" type="submit">Continue</button>
-    <a class="btn" href="/b/{{ binder.id }}">Cancel</a>
+    <a class="btn" href="/">Start Over</a>
   </form>
 </div>
 
