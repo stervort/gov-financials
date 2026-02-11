@@ -47,9 +47,8 @@
       </div>
 
       <div class="col">
-        <label>Description column (optional)</label><br>
-        <select name="desc_col">
-          <option value="" selected>(none)</option>
+        <label><b>Description column</b></label><br>
+        <select name="desc_col" required>
           {% for h in headers %}
             <option value="{{ h }}">{{ h }}</option>
           {% endfor %}
@@ -87,14 +86,14 @@
       <div class="col">
         <label><b>Amount format</b></label><br>
         <select name="amount_mode" id="amount_mode" required>
-          <option value="signed" selected>Signed amount (debit +, credit -)</option>
+          <option value="signed" selected>Total Balance Column (Debit, (Credit))</option>
           <option value="dc">Separate Debit / Credit columns</option>
         </select>
       </div>
 
       <div class="col" id="signed_wrap">
-        <label><b>Signed amount column</b></label><br>
-        <select name="balance_col">
+        <label><b>Total Balance column</b></label><br>
+        <select name="balance_col" required>
           <option value="" selected>(select)</option>
           {% for h in headers %}
             <option value="{{ h }}">{{ h }}</option>
@@ -120,6 +119,17 @@
             <option value="{{ h }}">{{ h }}</option>
           {% endfor %}
         </select>
+
+        <div id="credit_sign_wrap" style="margin-top:10px;">
+          <label><b>Credit sign handling</b></label><br>
+          <select name="credit_sign_mode">
+            <option value="keep" selected>Keep Sign (credit is positive)</option>
+            <option value="reverse">Reverse Sign (credit is stored as positive but should be negative)</option>
+          </select>
+          <div style="font-size:12px; opacity:.8; margin-top:6px;">
+            Use <b>Reverse Sign</b> if your credit column stores credits as positive numbers.
+          </div>
+        </div>
       </div>
     </div>
 
@@ -150,4 +160,5 @@
 </script>
 
 {% endblock %}
+
 
