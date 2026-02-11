@@ -51,6 +51,7 @@ def _normalize_csv_text(csv_text: str, delimiter: str, has_headers: bool, header
 # -------------------------
 @dataclass
 class ColumnMapping:
+    # required (no defaults)
     account_col: str
     desc_col: Optional[str]
 
@@ -62,17 +63,14 @@ class ColumnMapping:
     debit_col: Optional[str]
     credit_col: Optional[str]
 
-    # If using separate debit/credit columns:
-    # - keep: credit column is positive and should be subtracted
-    # - reverse: credit column stored positive but should be treated as negative (flip sign before calc)
-    credit_sign_mode: str = "keep"  # "keep" or "reverse"
-
-    # fund logic
+    # fund logic (required)
     fund_mode: str  # "fund_from_account_prefix" or "fund_column" or "single_fund"
     fund_col: Optional[str]
     fund_delimiter: str  # e.g. "-"
 
-    # filters
+    # defaults MUST come after all required fields
+    credit_sign_mode: str = "keep"  # "keep" or "reverse"
+
     ignore_blank_account: bool = True
     ignore_blank_amount: bool = True
     ignore_zero: bool = True
@@ -142,7 +140,6 @@ def read_csv_preview(
 
         return headers, rows
 
-    # no headers
     headers = [f"Column {i+1}" for i in range(len(first))]
     rows_list: List[List[str]] = [first]
 
@@ -151,8 +148,6 @@ def read_csv_preview(
             break
         rows_list.append(r)
 
-    # For template preview we prefer dict-style access; but caller can handle either.
-    # We'll return list-of-lists for no-header mode (not used in XLSX-only MVP).
     return headers, rows_list
 
 
@@ -301,4 +296,3 @@ def validate_tb(
         "fund_counts": fund_counts,
         "top_abs": top_abs,
     }
-
