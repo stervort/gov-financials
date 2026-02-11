@@ -39,14 +39,12 @@
     </table>
   </div>
 
-  <form action="/tb/funds" method="post">
-    <!-- Wizard state -->
+  <form action="/b/{{ binder.id }}/tb/funds" method="post">
     <input type="hidden" name="upload_id" value="{{ upload_id }}">
     <input type="hidden" name="has_headers" value="{{ 1 if has_headers else 0 }}">
     <input type="hidden" name="delimiter" value="{{ delimiter }}">
     <input type="hidden" name="header_row" value="{{ header_row }}">
 
-    <!-- mapping carry-forward -->
     <input type="hidden" name="account_col" value="{{ mapping.account_col }}">
     <input type="hidden" name="desc_col" value="{{ mapping.desc_col or '' }}">
 
@@ -70,7 +68,7 @@
     {% endif %}
 
     <button class="btn btn-primary" type="submit">Continue</button>
-    <a class="btn" href="/">Start Over</a>
+    <a class="btn" href="/b/{{ binder.id }}">Cancel</a>
   </form>
 </div>
 
