@@ -3,6 +3,7 @@
 
 <div class="card">
   <h2>Map Columns</h2>
+  <p><b>Binder:</b> {{ binder_label }}</p>
   <p><b>File:</b> {{ filename }}</p>
 
   <h3 style="margin-top:16px;">Preview</h3>
@@ -29,7 +30,9 @@
 <div class="card">
   <h2>Choose Your Columns</h2>
 
-  <form action="/b/{{ binder.id }}/tb/validate" method="post">
+  <form action="/tb/validate" method="post">
+    <input type="hidden" name="binder_id" value="{{ binder_id }}">
+
     <input type="hidden" name="upload_id" value="{{ upload_id }}">
     <input type="hidden" name="has_headers" value="{{ 1 if has_headers else 0 }}">
     <input type="hidden" name="delimiter" value="{{ delimiter }}">
@@ -92,7 +95,7 @@
 
       <div class="col" id="signed_wrap">
         <label><b>Total Balance column</b></label><br>
-        <select name="balance_col">
+        <select name="balance_col" required>
           <option value="" selected>(select)</option>
           {% for h in headers %}
             <option value="{{ h }}">{{ h }}</option>
@@ -121,17 +124,20 @@
 
         <div style="height:10px;"></div>
 
-        <label><b>Credit sign handling</b></label><br>
+        <label><b>Credit sign</b></label><br>
         <select name="credit_sign_mode">
-          <option value="keep" selected>Keep Sign (credit is positive)</option>
-          <option value="reverse">Reverse Sign (credit is positive but should be negative)</option>
+          <option value="keep" selected>Keep Sign</option>
+          <option value="reverse">Reverse Sign</option>
         </select>
+        <div class="muted" style="margin-top:6px;">
+          Use “Reverse” if credits are stored as positive numbers.
+        </div>
       </div>
     </div>
 
     <br>
     <button class="btn btn-primary" type="submit">Validate</button>
-    <a class="btn" href="/b/{{ binder.id }}">Cancel</a>
+    <a class="btn" href="/">Start Over</a>
   </form>
 </div>
 
