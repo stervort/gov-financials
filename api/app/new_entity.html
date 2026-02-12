@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card">
+  <h2>New Entity</h2>
+  <p>Create an entity and its first binder.</p>
+
+  <form action="/entity/new" method="post">
+    <div class="row">
+      <div class="col">
+        <label><b>Entity Name</b></label><br>
+        <input type="text" name="entity_name" required style="width:100%;">
+      </div>
+      <div class="col">
+        <label><b>Period End</b></label><br>
+        <input type="date" name="period_end" required>
+      </div>
+    </div>
+
+    <hr style="margin:16px 0;">
+
+    <div class="row">
+      <div class="col">
+        <label>Address (optional)</label><br>
+        <input type="text" name="address" style="width:100%;">
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:10px;">
+      <div class="col">
+        <label>Contact Name (optional)</label><br>
+        <input type="text" name="contact_name" style="width:100%;">
+      </div>
+      <div class="col">
+        <label>Contact Email (optional)</label><br>
+        <input type="email" name="contact_email" style="width:100%;">
+      </div>
+    </div>
+
+    <br>
+    <button class="btn btn-primary" type="submit">Create Entity + Binder</button>
+    <a class="btn" href="/">Cancel</a>
+  </form>
+</div>
+
+{% endblock %}
