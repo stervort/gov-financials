@@ -267,14 +267,14 @@ def binder_dashboard(request: Request, binder_id: int):
 
 
 @app.get("/binder/{binder_id}/delete", response_class=HTMLResponse)
-def binder_delete_confirm(request: Request, binder_id: int):
+def binder_delete(request: Request, binder_id: int):
     with db_session() as db:
         header = load_binder_header(db, binder_id)
         if not header["binder_id"]:
             return RedirectResponse("/", status_code=303)
 
     return templates.TemplateResponse(
-        "binder_delete_confirm.html",
+        "binder_delete.html",
         template_ctx(request, **header, message=None),
     )
 
