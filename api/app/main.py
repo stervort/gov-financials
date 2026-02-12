@@ -24,7 +24,6 @@ from .models import (
     Account,
     TBImport,
     TBLine,
-    # These must exist in your models.py (you said you added Client/Binder already)
     Client,
     Binder,
 )
@@ -43,7 +42,6 @@ from .tb_import import (
 app = FastAPI()
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
 
-# MVP: create tables automatically
 Base.metadata.create_all(bind=engine)
 
 
@@ -52,20 +50,15 @@ def db_session() -> Session:
 
 
 # -----------------------
-# Helpers (NO detached ORM objects in templates)
+# Helpers (avoid detached ORM in Jinja)
 # -----------------------
 def load_binder_header(db: Session, binder_id: int) -> Dict[str, Any]:
-    """
-    Returns plain dict values for base.html header.
-    Avoids passing ORM objects to Jinja (prevents DetachedInstanceError).
-    """
     b = db.scalar(select(Binder).where(Binder.id == binder_id))
     if not b:
         return {"binder_id": None, "binder_label": None, "client_name": None, "period_end": None}
 
     c = db.scalar(select(Client).where(Client.id == b.client_id)) if getattr(b, "client_id", None) else None
 
-    # binder "label" concept: either explicit binder_name OR "Client (MM/DD/YYYY)" fallback
     period_end = getattr(b, "period_end", None)
     period_end_str = period_end.strftime("%m/%d/%Y") if period_end else ""
 
@@ -83,20 +76,12 @@ def load_binder_header(db: Session, binder_id: int) -> Dict[str, Any]:
 
 
 def template_ctx(request: Request, **kwargs) -> Dict[str, Any]:
-    """
-    Always include request. Optionally include binder header fields
-    (binder_id, binder_label, client_name, period_end) when provided.
-    """
     ctx = {"request": request}
     ctx.update(kwargs)
     return ctx
 
 
 def xlsx_bytes_to_csv_text(xlsx_bytes: bytes) -> str:
-    """
-    Converts the FIRST sheet of an .xlsx into CSV text for reuse by our mapping pipeline.
-    (We still use the CSV parsing utilities internally, but users upload XLSX only.)
-    """
     wb = load_workbook(filename=io.BytesIO(xlsx_bytes), data_only=True, read_only=True)
     ws = wb.worksheets[0]
 
@@ -137,85 +122,69 @@ def health():
 
 
 # ============================================================
-# HOME (Binder-first)
+# HOME (Select Binder)
 # ============================================================
 @app.get("/", response_class=HTMLResponse)
-def home(request: Request):
-    """
-    Home shows:
-    - Select Binder (recent binders)
-    - Create Entity/Client
-    - Create Binder
-    """
+def home(request: Request, client_id: Optional[int] = Query(default=None)):
     with db_session() as db:
-        # Recent binders (include last_accessed if you added it)
-        recent = db.execute(
-            select(Binder).order_by(desc(getattr(Binder, "last_accessed", Binder.id))).limit(20)
-        ).scalars().all()
-
-        # Convert to plain dicts
-        recent_rows = []
-        for b in recent:
-            c = db.scalar(select(Client).where(Client.id == b.client_id)) if getattr(b, "client_id", None) else None
-
-            period_end = getattr(b, "period_end", None)
-            period_end_str = period_end.strftime("%m/%d/%Y") if period_end else ""
-
-            binder_label = getattr(b, "binder_name", None)
-            if not binder_label:
-                client_name = getattr(c, "client_name", "") if c else ""
-                binder_label = f"{client_name} ({period_end_str})".strip()
-
-            recent_rows.append(
-                {
-                    "binder_id": b.id,
-                    "binder_label": binder_label,
-                    "client_name": getattr(c, "client_name", "") if c else "",
-                    "period_end": period_end_str,
-                    "last_accessed": getattr(b, "last_accessed", None),
-                }
-            )
-
         clients = db.execute(select(Client).order_by(Client.client_name)).scalars().all()
         client_rows = [{"id": c.id, "client_name": c.client_name} for c in clients]
+
+        selected_client = None
+        binder_rows = []
+
+        if client_id:
+            selected_client = db.scalar(select(Client).where(Client.id == client_id))
+
+            binders = db.execute(
+                select(Binder).where(Binder.client_id == client_id).order_by(desc(Binder.period_end), desc(Binder.id))
+            ).scalars().all()
+
+            for b in binders:
+                period_end = getattr(b, "period_end", None)
+                period_end_str = period_end.strftime("%m/%d/%Y") if period_end else ""
+
+                binder_label = getattr(b, "binder_name", None)
+                if not binder_label:
+                    binder_label = f"{selected_client.client_name} ({period_end_str})".strip() if selected_client else ""
+
+                binder_rows.append(
+                    {
+                        "binder_id": b.id,
+                        "binder_label": binder_label,
+                        "period_end": period_end_str,
+                    }
+                )
 
     return templates.TemplateResponse(
         "home.html",
         template_ctx(
             request,
-            recent_binders=recent_rows,
             clients=client_rows,
+            selected_client_id=client_id,
+            selected_client_name=(selected_client.client_name if selected_client else None),
+            binders=binder_rows,
             message=None,
         ),
     )
 
 
-@app.post("/client/create")
-def client_create(
+# ============================================================
+# NEW ENTITY WIZARD (creates entity + first binder)
+# ============================================================
+@app.get("/entity/new", response_class=HTMLResponse)
+def new_entity_page(request: Request):
+    return templates.TemplateResponse("new_entity.html", template_ctx(request, message=None))
+
+
+@app.post("/entity/new")
+def new_entity_create(
     request: Request,
-    client_name: str = Form(...),
+    entity_name: str = Form(...),
     address: str = Form(""),
     contact_name: str = Form(""),
     contact_email: str = Form(""),
-):
-    with db_session() as db:
-        c = Client(
-            client_name=client_name.strip(),
-            address=(address or "").strip(),
-            contact_name=(contact_name or "").strip(),
-            contact_email=(contact_email or "").strip(),
-        )
-        db.add(c)
-        db.commit()
-    return RedirectResponse("/", status_code=303)
-
-
-@app.post("/binder/create")
-def binder_create(
-    request: Request,
-    client_id: int = Form(...),
-    period_end: str = Form(...),  # "YYYY-MM-DD"
-    binder_name: str = Form(""),
+    period_end: str = Form(...),  # YYYY-MM-DD
 ):
     from datetime import date
 
@@ -223,10 +192,22 @@ def binder_create(
     pe = date(y, m, d)
 
     with db_session() as db:
+        c = Client(
+            client_name=entity_name.strip(),
+            address=(address or "").strip(),
+            contact_name=(contact_name or "").strip(),
+            contact_email=(contact_email or "").strip(),
+        )
+        db.add(c)
+        db.flush()
+
+        # Binder name style you described: "Entity (12/31/2025)"
+        binder_label = f"{c.client_name} ({pe.strftime('%m/%d/%Y')})"
+
         b = Binder(
-            client_id=client_id,
+            client_id=c.id,
             period_end=pe,
-            binder_name=(binder_name or "").strip(),
+            binder_name=binder_label,
         )
         db.add(b)
         db.commit()
@@ -235,11 +216,11 @@ def binder_create(
     return RedirectResponse(f"/binder/{b.id}/open", status_code=303)
 
 
+# ============================================================
+# BINDER ACTIONS
+# ============================================================
 @app.get("/binder/{binder_id}/open")
 def binder_open(request: Request, binder_id: int):
-    """
-    Marks binder as accessed and takes user to dashboard.
-    """
     from datetime import datetime
 
     with db_session() as db:
@@ -309,21 +290,15 @@ def binder_delete_do(
         return RedirectResponse(f"/binder/{binder_id}/delete", status_code=303)
 
     with db_session() as db:
-        # delete TB lines + imports tied to binder first
         imports = db.execute(select(TBImport).where(TBImport.binder_id == binder_id)).scalars().all()
         import_ids = [i.id for i in imports]
 
         if import_ids:
-            db.execute(select(TBLine).where(TBLine.tb_import_id.in_(import_ids)).delete(synchronize_session=False))
-            db.execute(select(TBImport).where(TBImport.id.in_(import_ids)).delete(synchronize_session=False))
+            db.query(TBLine).filter(TBLine.tb_import_id.in_(import_ids)).delete(synchronize_session=False)
+            db.query(TBImport).filter(TBImport.id.in_(import_ids)).delete(synchronize_session=False)
 
-        # delete uploaded files tied to binder (if you stored binder_id there)
         if hasattr(UploadedFile, "binder_id"):
-            db.execute(
-                select(UploadedFile)
-                .where(UploadedFile.binder_id == binder_id)
-                .delete(synchronize_session=False)
-            )
+            db.query(UploadedFile).filter(UploadedFile.binder_id == binder_id).delete(synchronize_session=False)
 
         b = db.get(Binder, binder_id)
         if b:
@@ -334,8 +309,55 @@ def binder_delete_do(
     return RedirectResponse("/", status_code=303)
 
 
+@app.get("/binder/{binder_id}/rollforward", response_class=HTMLResponse)
+def binder_rollforward_page(request: Request, binder_id: int):
+    with db_session() as db:
+        header = load_binder_header(db, binder_id)
+        if not header["binder_id"]:
+            return RedirectResponse("/", status_code=303)
+
+    return templates.TemplateResponse("rollforward.html", template_ctx(request, **header, message=None))
+
+
+@app.post("/binder/{binder_id}/rollforward")
+def binder_rollforward_create(
+    request: Request,
+    binder_id: int,
+    new_period_end: str = Form(...),  # YYYY-MM-DD
+):
+    from datetime import date
+
+    y, m, d = [int(x) for x in new_period_end.split("-")]
+    pe = date(y, m, d)
+
+    with db_session() as db:
+        old = db.get(Binder, binder_id)
+        if not old:
+            return RedirectResponse("/", status_code=303)
+
+        c = db.get(Client, old.client_id) if getattr(old, "client_id", None) else None
+        entity_name = c.client_name if c else "Entity"
+
+        # New binder label
+        binder_label = f"{entity_name} ({pe.strftime('%m/%d/%Y')})"
+
+        new_b = Binder(
+            client_id=old.client_id,
+            period_end=pe,
+            binder_name=binder_label,
+        )
+        db.add(new_b)
+        db.commit()
+        db.refresh(new_b)
+
+        # NOTE: copying “groupings/settings” happens later when we have binder-scoped settings tables.
+        # For now, rollforward just creates the new binder and you proceed.
+
+    return RedirectResponse(f"/binder/{new_b.id}/open", status_code=303)
+
+
 # ============================================================
-# TB Import Wizard (XLSX ONLY)
+# TB Import Wizard (XLSX ONLY) – binder-scoped
 # ============================================================
 @app.get("/tb/upload", response_class=HTMLResponse)
 def tb_upload_page(request: Request, binder_id: int = Query(...)):
@@ -344,15 +366,9 @@ def tb_upload_page(request: Request, binder_id: int = Query(...)):
         if not header["binder_id"]:
             return RedirectResponse("/", status_code=303)
 
-    return templates.TemplateResponse(
-        "upload.html",
-        template_ctx(request, **header, message=None),
-    )
+    return templates.TemplateResponse("upload.html", template_ctx(request, **header, message=None))
 
 
-# -----------------------
-# Step 1: Upload & Preview (XLSX ONLY)
-# -----------------------
 @app.post("/tb/upload", response_class=HTMLResponse)
 async def tb_upload(
     request: Request,
@@ -363,16 +379,15 @@ async def tb_upload(
     filename = file.filename or "upload.xlsx"
     lower = filename.lower()
 
+    with db_session() as db:
+        header = load_binder_header(db, binder_id)
+        if not header["binder_id"]:
+            return RedirectResponse("/", status_code=303)
+
     if not lower.endswith(".xlsx"):
-        with db_session() as db:
-            header = load_binder_header(db, binder_id)
         return templates.TemplateResponse(
             "upload.html",
-            template_ctx(
-                request,
-                **header,
-                message="Please upload an Excel .xlsx trial balance file.",
-            ),
+            template_ctx(request, **header, message="Please upload an Excel .xlsx trial balance file."),
         )
 
     content = xlsx_bytes_to_csv_text(raw)
@@ -384,10 +399,6 @@ async def tb_upload(
     content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
     with db_session() as db:
-        header = load_binder_header(db, binder_id)
-        if not header["binder_id"]:
-            return RedirectResponse("/", status_code=303)
-
         uf = UploadedFile(
             filename=filename,
             content_type=content_type,
@@ -413,6 +424,7 @@ async def tb_upload(
         template_ctx(
             request,
             **header,
+            binder_id=binder_id,
             upload_id=uf.id,
             filename=filename,
             headers=headers,
@@ -425,9 +437,6 @@ async def tb_upload(
     )
 
 
-# -----------------------
-# Step 2: Validate Mapping
-# -----------------------
 @app.post("/tb/validate", response_class=HTMLResponse)
 def tb_validate(
     request: Request,
@@ -437,15 +446,14 @@ def tb_validate(
     delimiter: str = Form(...),
     header_row: int = Form(...),
 
-    # mapping selections
     account_col: str = Form(...),
     desc_col: str = Form(...),
 
-    amount_mode: str = Form(...),  # "signed" | "dc"
+    amount_mode: str = Form(...),
     balance_col: str = Form(""),
     debit_col: str = Form(""),
     credit_col: str = Form(""),
-    credit_sign_mode: str = Form("keep"),  # keep | reverse
+    credit_sign_mode: str = Form("keep"),
 
     fund_mode: str = Form(...),
     fund_col: str = Form(""),
@@ -499,9 +507,6 @@ def tb_validate(
     )
 
 
-# ----------------------------------------
-# Step 3: Funds Setup Screen
-# ----------------------------------------
 @app.post("/tb/funds", response_class=HTMLResponse)
 def tb_funds(
     request: Request,
@@ -593,9 +598,6 @@ def tb_funds(
     )
 
 
-# -----------------------
-# Step 4: Commit TB Import
-# -----------------------
 @app.post("/tb/import", response_class=HTMLResponse)
 async def tb_import_commit(request: Request):
     form = dict(await request.form())
@@ -647,13 +649,11 @@ async def tb_import_commit(request: Request):
                 template_ctx(
                     request,
                     **header,
-                    binder_id=binder_id,
                     import_name="Import failed",
                     imported_lines=0,
                 ),
             )
 
-        # capture while session is open
         uf_filename = uf.filename
         csv_text = uf.content_text
 
@@ -666,7 +666,6 @@ async def tb_import_commit(request: Request):
         db.commit()
         db.refresh(tbi)
 
-        # Funds
         fund_cache: Dict[str, Fund] = {}
         for k, v in form.items():
             if k.startswith("fund_name__"):
@@ -687,7 +686,6 @@ async def tb_import_commit(request: Request):
 
         db.flush()
 
-        # Accounts + Lines
         acct_cache: Dict[str, Account] = {}
 
         for rowno, row in iter_csv_rows(csv_text, has_headers, header_row, delimiter):
