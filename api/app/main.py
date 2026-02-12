@@ -55,7 +55,7 @@ def db_session() -> Session:
 def load_binder_header(db: Session, binder_id: int) -> Dict[str, Any]:
     b = db.scalar(select(Binder).where(Binder.id == binder_id))
     if not b:
-        return {"binder_id": None, "binder_label": None, "client_name": None, "period_end": None}
+        return {"binder_id": None, "binder_label": None, "entity_name": None, "period_end": None}
 
     c = db.scalar(select(Client).where(Client.id == b.client_id)) if getattr(b, "client_id", None) else None
 
@@ -64,13 +64,13 @@ def load_binder_header(db: Session, binder_id: int) -> Dict[str, Any]:
 
     binder_label = getattr(b, "binder_name", None)
     if not binder_label:
-        client_name = getattr(c, "client_name", "") if c else ""
-        binder_label = f"{client_name} ({period_end_str})".strip()
+        entity_name = getattr(c, "client_name", "") if c else ""
+        binder_label = f"{entity_name} ({period_end_str})".strip()
 
     return {
         "binder_id": b.id,
         "binder_label": binder_label,
-        "client_name": getattr(c, "client_name", None) if c else None,
+        "entity_name": getattr(c, "client_name", None) if c else None,
         "period_end": period_end_str or None,
     }
 
@@ -162,7 +162,7 @@ def home(request: Request, client_id: Optional[int] = Query(default=None)):
             request,
             clients=client_rows,
             selected_client_id=client_id,
-            selected_client_name=(selected_client.client_name if selected_client else None),
+            selected_entity_name=(selected_client.client_name if selected_client else None),
             binders=binder_rows,
             message=None,
         ),
@@ -201,7 +201,6 @@ def new_entity_create(
         db.add(c)
         db.flush()
 
-        # Binder name style you described: "Entity (12/31/2025)"
         binder_label = f"{c.client_name} ({pe.strftime('%m/%d/%Y')})"
 
         b = Binder(
@@ -338,7 +337,6 @@ def binder_rollforward_create(
         c = db.get(Client, old.client_id) if getattr(old, "client_id", None) else None
         entity_name = c.client_name if c else "Entity"
 
-        # New binder label
         binder_label = f"{entity_name} ({pe.strftime('%m/%d/%Y')})"
 
         new_b = Binder(
@@ -349,9 +347,6 @@ def binder_rollforward_create(
         db.add(new_b)
         db.commit()
         db.refresh(new_b)
-
-        # NOTE: copying “groupings/settings” happens later when we have binder-scoped settings tables.
-        # For now, rollforward just creates the new binder and you proceed.
 
     return RedirectResponse(f"/binder/{new_b.id}/open", status_code=303)
 
@@ -392,7 +387,6 @@ async def tb_upload(
 
     content = xlsx_bytes_to_csv_text(raw)
 
-    # Locked assumptions for XLSX wizard
     has_headers_bool = True
     delimiter_used = ","
     header_row_used = 1
@@ -745,10 +739,8 @@ async def tb_import_commit(request: Request):
         "complete.html",
         template_ctx(
             request,
+            **header,
             binder_id=binder_id,
-            binder_label=header["binder_label"],
-            client_name=header["client_name"],
-            period_end=header["period_end"],
             import_name=f"TB Import - {uf_filename}",
             imported_lines=imported_lines,
         ),
