@@ -19,8 +19,9 @@
         style="margin-top:6px;"
       />
 
+      <input type="hidden" id="selected_client_id" value="{{ selected_client_id or '' }}">
+
       <div
-        id="entity_list"
         style="
           margin-top:10px;
           border:1px solid #e7e9f2;
@@ -29,10 +30,8 @@
           background:#fff;
         "
       >
-        <div
-          id="entity_list_inner"
-          style="max-height:360px; overflow:auto;"
-        >
+        <!-- Fixed height window -->
+        <div id="entity_list_inner" style="height:340px; overflow:auto;">
           {% for c in clients %}
             <a
               class="entity-item"
@@ -41,10 +40,12 @@
               data-id="{{ c.id }}"
               style="
                 display:block;
-                padding:10px 12px;
+                padding:8px 10px;
                 text-decoration:none;
                 color:#0b1b33;
                 border-bottom:1px solid #f0f2fa;
+                font-size:13px;
+                line-height:1.25;
               "
             >
               {{ c.client_name }}
@@ -52,20 +53,14 @@
           {% endfor %}
         </div>
 
-        <div
-          id="entity_no_results"
-          class="muted"
-          style="display:none; padding:10px 12px;"
-        >
+        <div id="entity_no_results" class="muted" style="display:none; padding:10px 12px;">
           No matching entities.
         </div>
       </div>
 
       <div class="muted" style="margin-top:8px;">
-        Click an entity to view its binders.
+        Showing {{ clients|length }} entities. Click one to view its binders.
       </div>
-
-      <input type="hidden" id="selected_client_id" value="{{ selected_client_id or '' }}">
     </div>
 
     <!-- RIGHT: Binder list -->
@@ -81,85 +76,40 @@
       </div>
 
       {% if binders and binders|length > 0 %}
-        <table>
-          <thead>
-            <tr>
-              <th>Binder</th>
-              <th>Period End</th>
-              <th style="width:260px;">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for b in binders %}
+        <!-- Fixed height window for binders -->
+        <div
+          style="
+            height:420px;
+            overflow:auto;
+            border:1px solid #e7e9f2;
+            border-radius:10px;
+            background:#fff;
+          "
+        >
+          <table style="margin:0; font-size:13px; line-height:1.25;">
+            <thead>
               <tr>
-                <td>{{ b.binder_label }}</td>
-                <td>{{ b.period_end }}</td>
-                <td>
-                  <a class="btn btn-primary" href="/binder/{{ b.binder_id }}/open">Open</a>
-                  <a class="btn" href="/binder/{{ b.binder_id }}/rollforward">Rollforward</a>
-                  <a class="btn" href="/binder/{{ b.binder_id }}/delete">Delete</a>
-                </td>
+                <th style="position:sticky; top:0; background:#f2f4fb; z-index:1;">Binder</th>
+                <th style="position:sticky; top:0; background:#f2f4fb; z-index:1;">Period End</th>
+                <th style="position:sticky; top:0; background:#f2f4fb; z-index:1; width:260px;">Actions</th>
               </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-
-      {% elif selected_entity_name %}
-        <div class="warn">
-          No binders found for this entity.
+            </thead>
+            <tbody>
+              {% for b in binders %}
+                <tr>
+                  <td>{{ b.binder_label }}</td>
+                  <td>{{ b.period_end }}</td>
+                  <td>
+                    <a class="btn btn-primary" href="/binder/{{ b.binder_id }}/open">Open</a>
+                    <a class="btn" href="/binder/{{ b.binder_id }}/rollforward">Rollforward</a>
+                    <a class="btn" href="/binder/{{ b.binder_id }}/delete">Delete</a>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
         </div>
-      {% endif %}
-    </div>
-  </div>
-</div>
 
-<script>
-  (function () {
-    const search = document.getElementById("entity_search");
-    const selectedId = document.getElementById("selected_client_id").value;
-    const items = Array.from(document.querySelectorAll(".entity-item"));
-    const noResults = document.getElementById("entity_no_results");
-
-    // Highlight selected entity
-    if (selectedId) {
-      for (const a of items) {
-        if (a.dataset.id === selectedId) {
-          a.style.background = "#f2f4fb";
-          a.style.fontWeight = "600";
-          // scroll into view (nice touch)
-          setTimeout(() => a.scrollIntoView({ block: "nearest" }), 0);
-          break;
-        }
-      }
-    }
-
-    function applyFilter() {
-      const q = (search.value || "").trim().toLowerCase();
-      let visibleCount = 0;
-
-      for (const a of items) {
-        const name = a.dataset.name || "";
-        const show = !q || name.includes(q);
-        a.style.display = show ? "block" : "none";
-        if (show) visibleCount++;
-      }
-
-      noResults.style.display = (visibleCount === 0) ? "block" : "none";
-    }
-
-    search.addEventListener("input", applyFilter);
-
-    // Optional: press Escape to clear search
-    search.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") {
-        search.value = "";
-        applyFilter();
-      }
-    });
-
-    // Run once on load
-    applyFilter();
-  })();
-</script>
-
-{% endblock %}
+        <div class="muted" style="margin-top:8px;">
+          Showing {{ binders|length }} binders. Scroll to view more.
+        </div>
