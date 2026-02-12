@@ -2,9 +2,12 @@
 {% block content %}
 <div class="card">
   <h2>Confirm Funds</h2>
-  <p>We detected these fund codes. Enter names and choose fund type. This will be remembered next year.</p>
+  <p><b>Binder:</b> {{ binder_label }}</p>
+  <p>We detected these fund codes. Enter names and choose fund type.</p>
 
-  <form action="/b/{{ binder.id }}/tb/import" method="post">
+  <form action="/tb/import" method="post">
+    <input type="hidden" name="binder_id" value="{{ binder_id }}">
+
     <input type="hidden" name="upload_id" value="{{ upload_id }}" />
     <input type="hidden" name="has_headers" value="{{ has_headers }}" />
     <input type="hidden" name="delimiter" value="{{ delimiter }}" />
@@ -12,7 +15,6 @@
 
     <input type="hidden" name="account_col" value="{{ mapping.account_col }}" />
     <input type="hidden" name="desc_col" value="{{ mapping.desc_col or '' }}" />
-
     <input type="hidden" name="amount_mode" value="{{ mapping.mode }}" />
     <input type="hidden" name="balance_col" value="{{ mapping.balance_col or '' }}" />
     <input type="hidden" name="debit_col" value="{{ mapping.debit_col or '' }}" />
@@ -38,7 +40,7 @@
           <td><b>{{ code }}</b></td>
           <td>{{ fund_counts[code] }}</td>
           <td>
-            <input type="text" name="fund_name__{{ code }}" placeholder="e.g., General Fund" style="width: 100%;" required />
+            <input type="text" name="fund_name__{{ code }}" placeholder="e.g., General Fund" style="width: 100%;" />
           </td>
           <td>
             <select name="fund_type__{{ code }}" required>
@@ -56,7 +58,7 @@
 
     <br/>
     <button class="btn btn-primary" type="submit">Import TB</button>
-    <a class="btn" href="/b/{{ binder.id }}">Cancel</a>
+    <a class="btn" href="/">Back to Home</a>
   </form>
 </div>
 {% endblock %}
