@@ -1,0 +1,54 @@
+{# api/app/templates/new_entity.html #}
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card">
+  <h2>New Entity</h2>
+
+  {% if message %}
+    <div class="err" style="margin-bottom:12px;">
+      {{ message }}
+    </div>
+  {% endif %}
+
+  <form action="/entity/new" method="post">
+    <div class="row">
+      <div class="col">
+        <label><b>Entity Name</b></label><br>
+        <input type="text" name="entity_name" required placeholder="e.g., City of Springfield" />
+      </div>
+      <div class="col">
+        <label><b>First Binder Period End</b></label><br>
+        <input type="date" name="period_end" required />
+      </div>
+    </div>
+
+    <hr style="margin:16px 0;">
+
+    <div class="row">
+      <div class="col">
+        <label>Address (optional)</label><br>
+        <input type="text" name="address" placeholder="Address" />
+      </div>
+      <div class="col">
+        <label>Contact Name (optional)</label><br>
+        <input type="text" name="contact_name" placeholder="Contact name" />
+      </div>
+      <div class="col">
+        <label>Contact Email (optional)</label><br>
+        <input type="text" name="contact_email" placeholder="email@example.com" />
+      </div>
+    </div>
+
+    <br>
+
+    <button class="btn btn-primary" type="submit">Create Entity & Binder</button>
+    <a class="btn" href="/">Cancel</a>
+  </form>
+
+  <p class="muted" style="margin-top:12px;">
+    This creates the entity and its first binder in one step.
+  </p>
+</div>
+
+{% endblock %}
