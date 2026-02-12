@@ -28,9 +28,9 @@
   </div>
 
   <div style="margin-top:14px;">
-    {% if selected_client_name %}
+    {% if selected_entity_name %}
       <p style="margin:0;">
-        <b>Entity:</b> {{ selected_client_name }}
+        <b>Entity:</b> {{ selected_entity_name }}
       </p>
     {% else %}
       <p style="margin:0; opacity:.85;">Choose an entity to see its binders.</p>
@@ -61,7 +61,7 @@
         {% endfor %}
       </tbody>
     </table>
-  {% elif selected_client_name %}
+  {% elif selected_entity_name %}
     <div class="warn" style="margin-top:12px;">
       No binders found for this entity.
     </div>
@@ -78,7 +78,6 @@
     // If already selected, display the name in the input
     const selectedId = hidden.value;
     if (selectedId) {
-      // Find matching option by id
       const opts = list.querySelectorAll("option");
       for (const o of opts) {
         if (o.dataset.id === selectedId) {
