@@ -1,3 +1,4 @@
+{# api/app/templates/upload.html #}
 {% extends "base.html" %}
 
 {% block content %}
@@ -5,13 +6,17 @@
   <h2>Upload Trial Balance (Excel .xlsx)</h2>
 
   {% if message %}
-    <div class="warn">{{ message }}</div>
-    <br/>
+    <div class="err" style="margin-bottom:12px;">
+      {{ message }}
+    </div>
   {% endif %}
 
-  <p><b>Binder:</b> {{ binder_label }}</p>
+  <p class="muted" style="margin-top:0;">
+    <b>Binder:</b> {{ binder_label or "—" }}
+  </p>
 
   <form action="/tb/upload" method="post" enctype="multipart/form-data">
+    {# binder-scoped TB upload #}
     <input type="hidden" name="binder_id" value="{{ binder_id }}">
 
     <div class="row">
@@ -23,16 +28,20 @@
           accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
           required
         >
+        <div class="muted" style="margin-top:6px;">
+          Upload the trial balance for this binder period. Excel only.
+        </div>
       </div>
     </div>
 
     <br>
+
     <button class="btn btn-primary" type="submit">Upload & Preview</button>
-    <a class="btn" href="/">Back to Home</a>
+    <a class="btn" href="/binder/{{ binder_id }}/dashboard">Back to Binder</a>
   </form>
 
-  <p class="muted" style="margin-top:10px;">
-    Excel-only MVP. Upload the .xlsx trial balance.
+  <p class="muted" style="margin-top:12px;">
+    This MVP supports Excel only. Exporting to CSV is unnecessary—just upload the .xlsx trial balance.
   </p>
 </div>
 {% endblock %}
