@@ -4,137 +4,107 @@
 <div class="card">
   <h2>Select Binder</h2>
 
-  <form method="get" action="/">
-    <div class="row">
-      <div class="col">
-        <label>Search Entity</label>
-        <input type="text" name="q" value="{{ q or '' }}" placeholder="Search by entity name..." />
-      </div>
-      <div class="col" style="display:flex; align-items:flex-end; gap:10px;">
-        <button class="btn btn-primary" type="submit">Search</button>
-        <a class="btn" href="/">Clear</a>
-      </div>
-    </div>
-  </form>
+  <div class="row">
+    <div class="col">
+      <label><b>Select Entity</b> (type to search)</label><br>
+      <input
+        id="entity_input"
+        list="entity_list"
+        placeholder="Start typing…"
+        style="width: 100%;"
+      />
+      <datalist id="entity_list">
+        {% for c in clients %}
+          <option data-id="{{ c.id }}" value="{{ c.client_name }}"></option>
+        {% endfor %}
+      </datalist>
 
-  <hr style="margin:16px 0;">
-
-  <table>
-    <thead>
-      <tr>
-        <th>Binder</th>
-        <th>Entity</th>
-        <th>Period End</th>
-        <th>Last Accessed</th>
-        <th style="width:180px;">Actions</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for b in binder_rows %}
-      <tr>
-        <td><b>{{ b.label }}</b></td>
-        <td>{{ b.entity }}</td>
-        <td>{{ b.period_end }}</td>
-        <td>{{ b.last_accessed }}</td>
-        <td>
-          <a class="btn btn-primary" href="/binder/open/{{ b.id }}">Open</a>
-          <a class="btn btn-danger" href="/binder/{{ b.id }}/delete">Delete</a>
-        </td>
-      </tr>
-      {% endfor %}
-      {% if binder_rows|length == 0 %}
-      <tr><td colspan="5" class="muted">No binders found.</td></tr>
-      {% endif %}
-    </tbody>
-  </table>
-</div>
-
-<div class="card">
-  <h2>Create Entity</h2>
-  <form action="/entity/create" method="post">
-    <div class="row">
-      <div class="col">
-        <label><b>Entity Name</b></label>
-        <input type="text" name="entity_name" placeholder="e.g., City of Example" required />
-      </div>
-      <div class="col">
-        <label>Address (optional)</label>
-        <input type="text" name="address" placeholder="123 Main St" />
-      </div>
+      <input type="hidden" id="selected_client_id" value="{{ selected_client_id or '' }}">
     </div>
 
-    <div class="row" style="margin-top:10px;">
-      <div class="col">
-        <label>Contact Name (optional)</label>
-        <input type="text" name="contact_name" placeholder="Jane Doe" />
-      </div>
-      <div class="col">
-        <label>Contact Email (optional)</label>
-        <input type="text" name="contact_email" placeholder="jane@example.gov" />
-      </div>
+    <div class="col" style="display:flex; align-items:flex-end; gap:10px;">
+      <a class="btn btn-primary" href="/entity/new">New Entity</a>
     </div>
+  </div>
 
-    <br/>
-    <button class="btn btn-primary" type="submit">Create Entity</button>
-  </form>
-</div>
+  <div style="margin-top:14px;">
+    {% if selected_client_name %}
+      <p style="margin:0;">
+        <b>Entity:</b> {{ selected_client_name }}
+      </p>
+    {% else %}
+      <p style="margin:0; opacity:.85;">Choose an entity to see its binders.</p>
+    {% endif %}
+  </div>
 
-<div class="card">
-  <h2>Create Binder</h2>
-  <p class="muted">Binders are stored as: Entity (Period End). Rollforward will come next.</p>
-
-  <form action="/binder/create" method="post">
-    <div class="row">
-      <div class="col">
-        <label><b>Entity</b></label>
-        <select name="entity_id" required>
-          <option value="" selected>(select)</option>
-          {% for e in entities %}
-            <option value="{{ e.id }}">{{ e.name }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="col">
-        <label><b>Period End</b></label>
-        <input type="date" name="period_end" required />
-      </div>
+  {% if binders and binders|length > 0 %}
+    <h3 style="margin-top:14px;">Binders</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Binder</th>
+          <th>Period End</th>
+          <th style="width:260px;">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for b in binders %}
+          <tr>
+            <td>{{ b.binder_label }}</td>
+            <td>{{ b.period_end }}</td>
+            <td>
+              <a class="btn btn-primary" href="/binder/{{ b.binder_id }}/open">Open</a>
+              <a class="btn" href="/binder/{{ b.binder_id }}/rollforward">Rollforward</a>
+              <a class="btn" href="/binder/{{ b.binder_id }}/delete">Delete</a>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% elif selected_client_name %}
+    <div class="warn" style="margin-top:12px;">
+      No binders found for this entity.
     </div>
-
-    <br/>
-    <button class="btn btn-primary" type="submit">Create Binder</button>
-  </form>
+  {% endif %}
 </div>
 
-<div class="card">
-  <h2>Recent Binders</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>Binder</th>
-        <th>Entity</th>
-        <th>Period End</th>
-        <th>Last Accessed</th>
-        <th style="width:180px;">Actions</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for b in recent_binders %}
-      <tr>
-        <td><b>{{ b.label }}</b></td>
-        <td>{{ b.entity }}</td>
-        <td>{{ b.period_end }}</td>
-        <td>{{ b.last_accessed }}</td>
-        <td>
-          <a class="btn btn-primary" href="/binder/open/{{ b.id }}">Open</a>
-          <a class="btn btn-danger" href="/binder/{{ b.id }}/delete">Delete</a>
-        </td>
-      </tr>
-      {% endfor %}
-      {% if recent_binders|length == 0 %}
-      <tr><td colspan="5" class="muted">No recent binders yet.</td></tr>
-      {% endif %}
-    </tbody>
-  </table>
-</div>
+<script>
+  // Typeahead datalist -> redirect to /?client_id=...
+  (function () {
+    const input = document.getElementById("entity_input");
+    const list = document.getElementById("entity_list");
+    const hidden = document.getElementById("selected_client_id");
+
+    // If already selected, display the name in the input
+    const selectedId = hidden.value;
+    if (selectedId) {
+      // Find matching option by id
+      const opts = list.querySelectorAll("option");
+      for (const o of opts) {
+        if (o.dataset.id === selectedId) {
+          input.value = o.value;
+          break;
+        }
+      }
+    }
+
+    input.addEventListener("change", () => {
+      const val = input.value;
+      let foundId = null;
+
+      const opts = list.querySelectorAll("option");
+      for (const o of opts) {
+        if (o.value === val) {
+          foundId = o.dataset.id;
+          break;
+        }
+      }
+
+      if (foundId) {
+        window.location.href = "/?client_id=" + encodeURIComponent(foundId);
+      }
+    });
+  })();
+</script>
 
 {% endblock %}
