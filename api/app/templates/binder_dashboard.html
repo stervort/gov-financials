@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card">
+  <h2>Binder Dashboard</h2>
+  <p><b>Binder:</b> {{ binder_label }}</p>
+
+  <div class="row">
+    <div class="col card">
+      <h3>Trial Balance</h3>
+      <p><b>Latest Import:</b> {{ latest_import_name or "—" }}</p>
+      <p><b>Imported At:</b> {{ latest_import_date or "—" }}</p>
+      <p><b>Lines:</b> {{ latest_import_lines or 0 }}</p>
+
+      <div style="margin-top:10px;">
+        <a class="btn btn-primary" href="/tb/upload?binder_id={{ binder_id }}">Upload / Replace TB</a>
+      </div>
+      <p class="muted" style="margin-top:10px;">
+        MVP: we assume one TB per binder. Uploading again is allowed, but you’ll decide whether to overwrite later.
+      </p>
+    </div>
+
+    <div class="col card">
+      <h3>Next Modules</h3>
+      <ul>
+        <li>Rollforward (coming next)</li>
+        <li>Grouping changes report (coming next)</li>
+        <li>TB viewer / exports (coming next)</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Quick Actions</h3>
+    <a class="btn" href="/">Back to Home</a>
+    <a class="btn btn-danger" href="/binder/{{ binder_id }}/delete">Delete Binder</a>
+  </div>
+
+{% endblock %}
