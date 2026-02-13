@@ -16,20 +16,20 @@ enum FundType {
 }
 
 model Organization {
-  id         String      @id @default(cuid())
+  id         String       @id @default(cuid())
   name       String
-  createdAt  DateTime    @default(now())
+  createdAt  DateTime     @default(now())
   engagements Engagement[]
 }
 
 model Engagement {
-  id             String             @id @default(cuid())
+  id             String              @id @default(cuid())
   organizationId String
   name           String
   fiscalYearEnd  DateTime
-  createdAt      DateTime           @default(now())
+  createdAt      DateTime            @default(now())
 
-  organization Organization        @relation(fields: [organizationId], references: [id])
+  organization Organization         @relation(fields: [organizationId], references: [id])
   tbImports     TrialBalanceImport[]
   fundRules     FundDetectionRule[]
   funds         Fund[]
@@ -38,13 +38,19 @@ model Engagement {
 }
 
 model TrialBalanceImport {
-  id           String           @id @default(cuid())
+  id           String   @id @default(cuid())
   engagementId String
-  createdAt    DateTime         @default(now())
+  createdAt    DateTime @default(now())
   filename     String
-  status       String           @default("IMPORTED")
-  rowCount     Int              @default(0)
-  totalBalance Decimal          @default(0) @db.Decimal(18,2)
+  status       String   @default("IMPORTED")
+  rowCount     Int      @default(0)
+  totalBalance Decimal  @default(0) @db.Decimal(18,2)
+
+  // NEW: supports CSV/XLSX and headerless/manual mapping
+  fileType   String?
+  hasHeaders Boolean @default(true)
+  rawMatrix  Json?
+  columnMap  Json?
 
   engagement Engagement        @relation(fields: [engagementId], references: [id])
   lines      TrialBalanceLine[]
@@ -53,15 +59,15 @@ model TrialBalanceImport {
 }
 
 model TrialBalanceLine {
-  id           String   @id @default(cuid())
-  importId     String
-  account      String
-  description  String?
-  finalBalance Decimal  @db.Decimal(18,2)
-  auditGroup   String?
+  id            String   @id @default(cuid())
+  importId      String
+  account       String
+  description   String?
+  finalBalance  Decimal  @db.Decimal(18,2)
+  auditGroup    String?
   auditSubgroup String?
-  fundCode     String?
-  fundType     FundType?
+  fundCode      String?
+  fundType      FundType?
 
   import TrialBalanceImport @relation(fields: [importId], references: [id])
 
