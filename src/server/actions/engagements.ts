@@ -32,3 +32,33 @@ export async function getEngagement(id: string) {
   const org = await ensureDefaultOrg();
   return db.engagement.findFirstOrThrow({ where: { id, organizationId: org.id } });
 }
+
+export async function deleteEngagement(formData: FormData) {
+  const org = await ensureDefaultOrg();
+  const engagementId = String(formData.get("engagementId") ?? "");
+
+  if (!engagementId) return;
+
+  // verify it belongs to our org
+  await db.engagement.findFirstOrThrow({
+    where: { id: engagementId, organizationId: org.id },
+  });
+
+  // delete children first to avoid FK errors
+  await db.$transaction(async (tx) => {
+    const imports = await tx.trialBalanceImport.findMany({
+      where: { engagementId },
+      select: { id: true },
+    });
+    const importIds = imports.map((x) => x.id);
+
+    if (importIds.length) {
+      await tx.trialBalanceLine.deleteMany({ where: { importId: { in: importIds } } });
+      await tx.trialBalanceImport.deleteMany({ where: { id: { in: importIds } } });
+    }
+
+    await tx.fund.deleteMany({ where: { engagementId } });
+    await tx.fundDetectionRule.deleteMany({ where: { engagementId } });
+    await tx.engagement.delete({ where: { id: engagementId } });
+  });
+}
