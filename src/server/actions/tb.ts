@@ -6,7 +6,6 @@ import {
   parseCSVToMatrix,
   parseExcelToMatrix,
   detectHasHeaders,
-  buildRowsFromMatrixWithHeaders,
   buildRowsFromMatrixWithMap,
   TBColumnMap,
 } from "@/src/server/engine/tb/normalize";
@@ -41,12 +40,19 @@ async function runFundDetection(engagementId: string, importId: string, rules: a
   }
 }
 
+function clampInt(v: unknown, min: number, max: number) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return min;
+  return Math.max(min, Math.min(max, Math.trunc(n)));
+}
+
 export async function uploadTB(formData: FormData) {
   const org = await ensureDefaultOrg();
   const engagementId = String(formData.get("engagementId") ?? "");
   if (!engagementId) throw new Error("Missing engagementId");
 
-  const e = await assertEngagement(org.id, engagementId);
+  // verify access + load default fund rules
+  await assertEngagement(org.id, engagementId);
 
   const file = formData.get("file");
   if (!(file instanceof File)) throw new Error("No file uploaded");
@@ -69,58 +75,18 @@ export async function uploadTB(formData: FormData) {
 
   if (!matrix || matrix.length === 0) throw new Error("File appears empty.");
 
-  const hasHeaders = detectHasHeaders(matrix[0] ?? []);
+  // ALWAYS go through mapping (industry standard)
+  const detectedHeaders = detectHasHeaders(matrix[0] ?? []);
 
-  // Headers exist → import immediately
-  if (hasHeaders) {
-    const rows = buildRowsFromMatrixWithHeaders(matrix);
-    const total = rows.reduce((a, r) => a + (r.finalBalance ?? 0), 0);
-
-    const imp = await db.trialBalanceImport.create({
-      data: {
-        engagementId,
-        filename: file.name,
-        status: "IMPORTED",
-        fileType: fileType ?? undefined,
-        hasHeaders: true,
-        rowCount: rows.length,
-        totalBalance: total,
-        lines: {
-          createMany: {
-            data: rows.map((r) => ({
-              account: r.account,
-              description: r.description,
-              finalBalance: r.finalBalance,
-              auditGroup: r.auditGroup,
-              auditSubgroup: r.auditSubgroup,
-            })),
-          },
-        },
-      },
-    });
-
-    const rules = e.fundRules.map((r) => ({
-      accountRegex: r.accountRegex,
-      captureGroup: r.captureGroup,
-      enabled: r.enabled,
-    }));
-
-    await runFundDetection(engagementId, imp.id, rules);
-
-    revalidatePath(`/dashboard/engagements/${engagementId}`);
-    revalidatePath(`/dashboard/engagements/${engagementId}/tb`);
-    revalidatePath(`/dashboard`);
-    redirect(`/dashboard/engagements/${engagementId}/tb`);
-  }
-
-  // No headers → create staging import, redirect to mapping UI
   const imp = await db.trialBalanceImport.create({
     data: {
       engagementId,
       filename: file.name,
       status: "NEEDS_MAPPING",
       fileType: fileType ?? undefined,
-      hasHeaders: false,
+      // prefill guess; user confirms on mapping screen
+      hasHeaders: detectedHeaders,
+      headerRowsToSkip: detectedHeaders ? 1 : 0,
       rawMatrix: matrix,
       rowCount: 0,
       totalBalance: 0,
@@ -149,13 +115,20 @@ export async function finalizeTBMapping(formData: FormData) {
   }
 
   const raw = imp.rawMatrix as any;
-  const matrix: any[][] = Array.isArray(raw) ? raw : [];
-  if (!matrix.length) throw new Error("Missing rawMatrix. Re-upload the TB.");
+  const matrixAll: any[][] = Array.isArray(raw) ? raw : [];
+  if (!matrixAll.length) throw new Error("Missing rawMatrix. Re-upload the TB.");
+
+  const hasHeaders = String(formData.get("hasHeaders") ?? "false") === "true";
+  const headerRowsToSkip = clampInt(formData.get("headerRowsToSkip"), 0, 50);
+
+  const matrix = matrixAll.slice(headerRowsToSkip);
 
   const map: TBColumnMap = {
     accountCol: Number(formData.get("accountCol")),
-    descriptionCol: formData.get("descriptionCol") === "" ? null : Number(formData.get("descriptionCol")),
-    finalBalanceCol: formData.get("finalBalanceCol") === "" ? null : Number(formData.get("finalBalanceCol")),
+    descriptionCol:
+      formData.get("descriptionCol") === "" ? null : Number(formData.get("descriptionCol")),
+    finalBalanceCol:
+      formData.get("finalBalanceCol") === "" ? null : Number(formData.get("finalBalanceCol")),
     debitCol: formData.get("debitCol") === "" ? null : Number(formData.get("debitCol")),
     creditCol: formData.get("creditCol") === "" ? null : Number(formData.get("creditCol")),
     groupCol: formData.get("groupCol") === "" ? null : Number(formData.get("groupCol")),
@@ -165,7 +138,11 @@ export async function finalizeTBMapping(formData: FormData) {
   if (!Number.isFinite(map.accountCol)) throw new Error("Account column is required.");
 
   const usingFinal = map.finalBalanceCol != null && Number.isFinite(map.finalBalanceCol);
-  const usingDrCr = map.debitCol != null && map.creditCol != null;
+  const usingDrCr =
+    map.debitCol != null &&
+    Number.isFinite(map.debitCol) &&
+    map.creditCol != null &&
+    Number.isFinite(map.creditCol);
 
   if (!usingFinal && !usingDrCr) {
     throw new Error("Choose either Final Balance column OR both Debit + Credit columns.");
@@ -194,6 +171,8 @@ export async function finalizeTBMapping(formData: FormData) {
         status: "IMPORTED",
         rowCount: rows.length,
         totalBalance: total,
+        hasHeaders,
+        headerRowsToSkip,
         columnMap: map as any,
       },
     });
@@ -210,7 +189,7 @@ export async function finalizeTBMapping(formData: FormData) {
   revalidatePath(`/dashboard/engagements/${engagementId}`);
   revalidatePath(`/dashboard/engagements/${engagementId}/tb`);
   revalidatePath(`/dashboard`);
-  redirect(`/dashboard/engagements/${engagementId}/tb`);
+  redirect(`/dashboard/engagements/${engagementId}`);
 }
 
 export async function clearTB(formData: FormData) {
@@ -261,7 +240,9 @@ export async function getImportPreview(importId: string) {
 }
 
 export async function getImportForMapping(importId: string) {
-  return db.trialBalanceImport.findFirstOrThrow({
+  const org = await ensureDefaultOrg();
+
+  const imp = await db.trialBalanceImport.findFirstOrThrow({
     where: { id: importId },
     select: {
       id: true,
@@ -270,6 +251,14 @@ export async function getImportForMapping(importId: string) {
       status: true,
       rawMatrix: true,
       hasHeaders: true,
+      headerRowsToSkip: true,
     },
   });
+
+  // Access check via engagement
+  await db.engagement.findFirstOrThrow({
+    where: { id: imp.engagementId, organizationId: org.id },
+  });
+
+  return imp;
 }
