@@ -1,31 +1,68 @@
 "use server";
+
 import { db } from "@/src/lib/db";
 import { ensureDefaultOrg } from "@/src/server/security/tenant";
+import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { z } from "zod";
 
-const Create = z.object({ name: z.string().min(2), fiscalYearEnd: z.string().min(8) });
+const Create = z.object({
+  name: z.string().min(2),
+  fiscalYearEnd: z.string().min(8),
+});
 
 export async function createEngagement(formData: FormData) {
   const org = await ensureDefaultOrg();
-  const v = Create.parse({ name: formData.get("name"), fiscalYearEnd: formData.get("fiscalYearEnd") });
+  const v = Create.parse({
+    name: formData.get("name"),
+    fiscalYearEnd: formData.get("fiscalYearEnd"),
+  });
 
-  await db.engagement.create({
+  const engagement = await db.engagement.create({
     data: {
       organizationId: org.id,
       name: v.name,
       fiscalYearEnd: new Date(v.fiscalYearEnd),
-      fundRules: { createMany: { data: [
-        { name: "Fund = first 2 digits (most formats)", accountRegex: "^(\\d{2}).*$", captureGroup: 1, enabled: false },
-        { name: "Fund = first 2 digits before dash/dot", accountRegex: "^(\\d{2})[-\\.].*$", captureGroup: 1, enabled: true },
-        { name: "Fund = first 2 digits in 10-50-4000", accountRegex: "^(\\d{2})-\\d{2}-\\d{4}.*$", captureGroup: 1, enabled: false }
-      ]}}
-    }
+      fundRules: {
+        createMany: {
+          data: [
+            {
+              name: "Fund = first 2 digits (most formats)",
+              accountRegex: "^(\\d{2}).*$",
+              captureGroup: 1,
+              enabled: false,
+            },
+            {
+              name: "Fund = first 2 digits before dash/dot",
+              accountRegex: "^(\\d{2})[-\\.].*$",
+              captureGroup: 1,
+              enabled: true,
+            },
+            {
+              name: "Fund = first 2 digits in 10-50-4000",
+              accountRegex: "^(\\d{2})-\\d{2}-\\d{4}.*$",
+              captureGroup: 1,
+              enabled: false,
+            },
+          ],
+        },
+      },
+    },
   });
+
+  // Ensure dashboard list updates immediately
+  revalidatePath("/dashboard");
+
+  // Make it obvious the create worked: go straight to the engagement
+  redirect(`/dashboard/engagements/${engagement.id}`);
 }
 
 export async function listEngagements() {
   const org = await ensureDefaultOrg();
-  return db.engagement.findMany({ where: { organizationId: org.id }, orderBy: { createdAt: "desc" } });
+  return db.engagement.findMany({
+    where: { organizationId: org.id },
+    orderBy: { createdAt: "desc" },
+  });
 }
 
 export async function getEngagement(id: string) {
@@ -61,4 +98,7 @@ export async function deleteEngagement(formData: FormData) {
     await tx.fundDetectionRule.deleteMany({ where: { engagementId } });
     await tx.engagement.delete({ where: { id: engagementId } });
   });
+
+  // update dashboard list after deletion
+  revalidatePath("/dashboard");
 }
