@@ -1,3 +1,6 @@
+export const dynamic = "force-dynamic";
+
+
 import { listFunds, updateFund } from "@/src/server/actions/funds";
 import { Card, CardContent, CardHeader, CardTitle } from "@/src/components/ui/card";
 import { Input } from "@/src/components/ui/input";
