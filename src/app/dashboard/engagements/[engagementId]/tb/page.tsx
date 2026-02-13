@@ -1,3 +1,6 @@
+export const dynamic = "force-dynamic";
+
+
 import { uploadTB, getLatestImport, getImportPreview } from "@/src/server/actions/tb";
 import { Card, CardContent, CardHeader, CardTitle } from "@/src/components/ui/card";
 import { Button } from "@/src/components/ui/button";
