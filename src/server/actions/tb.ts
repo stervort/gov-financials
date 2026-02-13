@@ -1,7 +1,8 @@
 "use server";
+
 import { db } from "@/src/lib/db";
 import { ensureDefaultOrg } from "@/src/server/security/tenant";
-import { parseTBFromCSV } from "@/src/server/engine/tb/normalize";
+import { parseTBFromCSV, parseTBFromExcel } from "@/src/server/engine/tb/normalize";
 import { detectFund } from "@/src/server/engine/tb/fundDetection";
 
 export async function uploadTB(formData: FormData) {
@@ -15,9 +16,20 @@ export async function uploadTB(formData: FormData) {
 
   const file = formData.get("file") as File;
   if (!file) throw new Error("No file uploaded");
-  const text = Buffer.from(await file.arrayBuffer()).toString("utf-8");
 
-  const rows = parseTBFromCSV(text);
+  const filename = (file.name || "").toLowerCase();
+  const buf = Buffer.from(await file.arrayBuffer());
+
+  let rows;
+  if (filename.endsWith(".csv")) {
+    const text = buf.toString("utf-8");
+    rows = parseTBFromCSV(text);
+  } else if (filename.endsWith(".xlsx") || filename.endsWith(".xls")) {
+    rows = parseTBFromExcel(buf);
+  } else {
+    throw new Error("Unsupported file type. Upload .csv, .xlsx, or .xls");
+  }
+
   const total = rows.reduce((a, r) => a + (r.finalBalance ?? 0), 0);
 
   const imp = await db.trialBalanceImport.create({
@@ -27,23 +39,34 @@ export async function uploadTB(formData: FormData) {
       status: "IMPORTED",
       rowCount: rows.length,
       totalBalance: total,
-      lines: { createMany: { data: rows.map(r => ({
-        account: r.account,
-        description: r.description,
-        finalBalance: r.finalBalance,
-        auditGroup: r.auditGroup,
-        auditSubgroup: r.auditSubgroup,
-      }))}}
-    }
+      lines: {
+        createMany: {
+          data: rows.map((r) => ({
+            account: r.account,
+            description: r.description,
+            finalBalance: r.finalBalance,
+            auditGroup: r.auditGroup,
+            auditSubgroup: r.auditSubgroup,
+          })),
+        },
+      },
+    },
   });
 
-  const rules = e.fundRules.map(r => ({ accountRegex: r.accountRegex, captureGroup: r.captureGroup, enabled: r.enabled }));
+  const rules = e.fundRules.map((r) => ({
+    accountRegex: r.accountRegex,
+    captureGroup: r.captureGroup,
+    enabled: r.enabled,
+  }));
+
   const lines = await db.trialBalanceLine.findMany({ where: { importId: imp.id } });
 
   for (const ln of lines) {
     const f = detectFund(ln.account, rules);
     if (!f) continue;
+
     await db.trialBalanceLine.update({ where: { id: ln.id }, data: { fundCode: f } });
+
     await db.fund.upsert({
       where: { engagementId_fundCode: { engagementId, fundCode: f } },
       update: {},
