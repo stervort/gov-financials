@@ -9,23 +9,24 @@ import { redirect } from "next/navigation";
 
 export async function uploadTB(formData: FormData) {
   const org = await ensureDefaultOrg();
-  const engagementId = String(formData.get("engagementId"));
+  const engagementId = String(formData.get("engagementId") ?? "");
+
+  if (!engagementId) throw new Error("Missing engagementId");
 
   const e = await db.engagement.findFirstOrThrow({
     where: { id: engagementId, organizationId: org.id },
     include: { fundRules: true },
   });
 
-  const file = formData.get("file") as File;
-  if (!file) throw new Error("No file uploaded");
+  const file = formData.get("file");
+  if (!(file instanceof File)) throw new Error("No file uploaded");
 
   const filename = (file.name || "").toLowerCase();
   const buf = Buffer.from(await file.arrayBuffer());
 
   let rows;
   if (filename.endsWith(".csv")) {
-    const text = buf.toString("utf-8");
-    rows = parseTBFromCSV(text);
+    rows = parseTBFromCSV(buf.toString("utf-8"));
   } else if (filename.endsWith(".xlsx") || filename.endsWith(".xls")) {
     rows = parseTBFromExcel(buf);
   } else {
@@ -79,16 +80,50 @@ export async function uploadTB(formData: FormData) {
     });
   }
 
-  // Make the UI refresh and show the preview immediately
-  revalidatePath(`/dashboard/engagements/${engagementId}/tb`);
+  // refresh UI + bounce back so it "feels" like it worked
   revalidatePath(`/dashboard/engagements/${engagementId}`);
+  revalidatePath(`/dashboard/engagements/${engagementId}/tb`);
   revalidatePath(`/dashboard`);
   redirect(`/dashboard/engagements/${engagementId}/tb`);
+}
+
+export async function clearTB(formData: FormData) {
+  const org = await ensureDefaultOrg();
+  const engagementId = String(formData.get("engagementId") ?? "");
+
+  if (!engagementId) return;
+
+  // verify it belongs to our org
+  await db.engagement.findFirstOrThrow({
+    where: { id: engagementId, organizationId: org.id },
+  });
+
+  await db.$transaction(async (tx) => {
+    const imports = await tx.trialBalanceImport.findMany({
+      where: { engagementId },
+      select: { id: true },
+    });
+    const importIds = imports.map((x) => x.id);
+
+    if (importIds.length) {
+      await tx.trialBalanceLine.deleteMany({ where: { importId: { in: importIds } } });
+      await tx.trialBalanceImport.deleteMany({ where: { id: { in: importIds } } });
+    }
+
+    // funds are derived from TB import in V1, so clear them too
+    await tx.fund.deleteMany({ where: { engagementId } });
+  });
+
+  revalidatePath(`/dashboard/engagements/${engagementId}`);
+  revalidatePath(`/dashboard/engagements/${engagementId}/tb`);
+  revalidatePath(`/dashboard`);
+  redirect(`/dashboard/engagements/${engagementId}`);
 }
 
 export async function getLatestImport(engagementId: string) {
   const org = await ensureDefaultOrg();
   await db.engagement.findFirstOrThrow({ where: { id: engagementId, organizationId: org.id } });
+
   return db.trialBalanceImport.findFirst({
     where: { engagementId },
     orderBy: { createdAt: "desc" },
