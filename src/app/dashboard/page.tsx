@@ -1,3 +1,6 @@
+export const dynamic = "force-dynamic";
+
+
 import Link from "next/link";
 import { listEngagements } from "@/src/server/actions/engagements";
 import { Card, CardContent, CardHeader, CardTitle } from "@/src/components/ui/card";
