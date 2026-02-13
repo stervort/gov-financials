@@ -1,147 +1,107 @@
 export const dynamic = "force-dynamic";
 
-import Link from "next/link";
-import { uploadTB, getLatestImport, getImportPreview, clearTB } from "@/src/server/actions/tb";
+import { getLatestImport, getImportPreview, uploadTB, clearTB } from "@/src/server/actions/tb";
 import { Card, CardContent, CardHeader, CardTitle } from "@/src/components/ui/card";
 import { Button } from "@/src/components/ui/button";
-import { Input } from "@/src/components/ui/input";
+import Link from "next/link";
 
 export default async function TBPage({ params }: { params: { engagementId: string } }) {
   const latest = await getLatestImport(params.engagementId);
   const preview = latest && latest.status === "IMPORTED" ? await getImportPreview(latest.id) : null;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-5xl">
       <Card>
         <CardHeader>
-          <CardTitle>Upload Trial Balance (CSV or Excel)</CardTitle>
+          <CardTitle>Trial Balance Upload</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3">
-          <p className="text-sm text-gray-500">
-            Accepts single signed balance (Final Balance / Balance) or Debit/Credit.
-            If no headers are detected, we’ll ask you to map columns.
+        <CardContent className="space-y-4">
+          <p className="text-sm text-gray-600">
+            Upload a trial balance (.csv, .xlsx, or .xls). After upload, you'll map the columns and confirm where the data starts.
           </p>
 
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-3">
             <form action={uploadTB} className="flex items-center gap-2">
               <input type="hidden" name="engagementId" value={params.engagementId} />
-              <Input name="file" type="file" accept=".csv,.xlsx,.xls" required />
-              <Button type="submit">Import</Button>
+              <input name="file" type="file" accept=".csv,.xlsx,.xls" required />
+              <Button type="submit">Upload & Map</Button>
+            </form>
+
+            <form action={clearTB}>
+              <input type="hidden" name="engagementId" value={params.engagementId} />
+              <Button type="submit" variant="ghost">
+                Clear TB
+              </Button>
             </form>
 
             {latest ? (
-              <form action={clearTB}>
-                <input type="hidden" name="engagementId" value={params.engagementId} />
-                <Button type="submit" variant="secondary">
-                  Clear TB
+              <Link href={`/dashboard/engagements/${params.engagementId}/tb/map/${latest.id}`}>
+                <Button variant="secondary" type="button">
+                  Map Latest
                 </Button>
-              </form>
+              </Link>
             ) : null}
-
-            <Link href={`/dashboard/engagements/${params.engagementId}`}>
-              <Button variant="ghost">Back</Button>
-            </Link>
           </div>
 
           {latest ? (
-            <div className="text-xs text-gray-500">
-              Latest: {latest.filename} ({latest.status})
-              {latest.status === "NEEDS_MAPPING" ? (
-                <>
-                  {" "}
-                  •{" "}
-                  <Link
-                    className="underline"
-                    href={`/dashboard/engagements/${params.engagementId}/tb/map/${latest.id}`}
-                  >
-                    Finish mapping
-                  </Link>
-                </>
-              ) : null}
+            <div className="text-sm text-gray-700">
+              <div>
+                <span className="font-medium">Latest:</span> {latest.filename} •{" "}
+                <span className="font-mono">{latest.status}</span>
+              </div>
+              {latest.status === "IMPORTED" ? (
+                <div className="text-gray-500">
+                  Rows: {latest.rowCount} • Total balance: {Number(latest.totalBalance).toLocaleString()}
+                </div>
+              ) : (
+                <div className="text-gray-500">
+                  Needs mapping. Click <span className="font-medium">Map Latest</span> to finish.
+                </div>
+              )}
             </div>
           ) : (
-            <div className="text-xs text-gray-500">No TB yet</div>
+            <div className="text-sm text-gray-500">No trial balance uploaded yet.</div>
           )}
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
-          <CardTitle>Latest Import Preview</CardTitle>
+          <CardTitle>Preview (first 50 lines)</CardTitle>
         </CardHeader>
         <CardContent>
-          {!latest ? (
-            <p className="text-sm text-gray-500">No import yet.</p>
-          ) : latest.status === "NEEDS_MAPPING" ? (
+          {!preview ? (
             <p className="text-sm text-gray-500">
-              Latest import needs column mapping. Click{" "}
-              <Link
-                className="underline"
-                href={`/dashboard/engagements/${params.engagementId}/tb/map/${latest.id}`}
-              >
-                Finish mapping
-              </Link>
-              .
+              Upload + map a trial balance to see a preview here.
             </p>
-          ) : !preview ? (
-            <p className="text-sm text-gray-500">No preview available.</p>
           ) : (
-            <div className="space-y-4">
-              <div className="grid gap-2 md:grid-cols-3">
-                <div className="text-sm">
-                  <span className="text-gray-500">File:</span>{" "}
-                  <span className="font-medium">{preview.filename}</span>
-                </div>
-                <div className="text-sm">
-                  <span className="text-gray-500">Rows:</span>{" "}
-                  <span className="font-medium">{preview.rowCount}</span>
-                </div>
-                <div className="text-sm">
-                  <span className="text-gray-500">Total:</span>{" "}
-                  <span className="font-medium">
-                    {Number(preview.totalBalance).toLocaleString(undefined, {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    })}
-                  </span>
-                </div>
-              </div>
-
-              <div className="overflow-auto border rounded-md">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-gray-50">
-                    <tr className="text-left">
-                      <th className="px-3 py-2">Account</th>
-                      <th className="px-3 py-2">Description</th>
-                      <th className="px-3 py-2 text-right">Final Balance</th>
-                      <th className="px-3 py-2">Group</th>
-                      <th className="px-3 py-2">Subgroup</th>
-                      <th className="px-3 py-2">Fund</th>
+            <div className="overflow-auto border rounded-md">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr className="text-left">
+                    <th className="px-3 py-2">Account</th>
+                    <th className="px-3 py-2">Description</th>
+                    <th className="px-3 py-2 text-right">Final Balance</th>
+                    <th className="px-3 py-2">Group</th>
+                    <th className="px-3 py-2">Subgroup</th>
+                    <th className="px-3 py-2">Fund</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.lines.map((l) => (
+                    <tr key={l.id} className="border-t">
+                      <td className="px-3 py-2 font-mono">{l.account}</td>
+                      <td className="px-3 py-2">{l.description}</td>
+                      <td className="px-3 py-2 text-right">
+                        {Number(l.finalBalance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                      <td className="px-3 py-2">{l.auditGroup ?? ""}</td>
+                      <td className="px-3 py-2">{l.auditSubgroup ?? ""}</td>
+                      <td className="px-3 py-2">{l.fundCode ?? ""}</td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {preview.lines.map((l) => (
-                      <tr key={l.id} className="border-t">
-                        <td className="px-3 py-2 font-mono">{l.account}</td>
-                        <td className="px-3 py-2">{l.description ?? ""}</td>
-                        <td className="px-3 py-2 text-right">
-                          {Number(l.finalBalance).toLocaleString(undefined, {
-                            minimumFractionDigits: 2,
-                            maximumFractionDigits: 2,
-                          })}
-                        </td>
-                        <td className="px-3 py-2">{l.auditGroup ?? ""}</td>
-                        <td className="px-3 py-2">{l.auditSubgroup ?? ""}</td>
-                        <td className="px-3 py-2">{l.fundCode ?? ""}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <p className="text-xs text-gray-500">
-                This shows the latest import. Clear TB deletes all TB imports and derived funds.
-              </p>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </CardContent>
