@@ -43,13 +43,7 @@ export default async function Dashboard() {
 
                     <form action={deleteEngagement}>
                       <input type="hidden" name="engagementId" value={e.id} />
-                      <Button
-                        type="submit"
-                        variant="ghost"
-                        onClick={(ev) => {
-                          if (!confirm(`Delete engagement "${e.name}"?`)) ev.preventDefault();
-                        }}
-                      >
+                      <Button type="submit" variant="ghost">
                         Delete
                       </Button>
                     </form>
