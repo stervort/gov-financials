@@ -4,6 +4,8 @@ import { db } from "@/src/lib/db";
 import { ensureDefaultOrg } from "@/src/server/security/tenant";
 import { parseTBFromCSV, parseTBFromExcel } from "@/src/server/engine/tb/normalize";
 import { detectFund } from "@/src/server/engine/tb/fundDetection";
+import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 
 export async function uploadTB(formData: FormData) {
   const org = await ensureDefaultOrg();
@@ -30,7 +32,7 @@ export async function uploadTB(formData: FormData) {
     throw new Error("Unsupported file type. Upload .csv, .xlsx, or .xls");
   }
 
-  const total = rows.reduce((a, r) => a + (r.finalBalance ?? 0), 0);
+  const total = rows.reduce((a: number, r: any) => a + (r.finalBalance ?? 0), 0);
 
   const imp = await db.trialBalanceImport.create({
     data: {
@@ -41,7 +43,7 @@ export async function uploadTB(formData: FormData) {
       totalBalance: total,
       lines: {
         createMany: {
-          data: rows.map((r) => ({
+          data: rows.map((r: any) => ({
             account: r.account,
             description: r.description,
             finalBalance: r.finalBalance,
@@ -53,7 +55,7 @@ export async function uploadTB(formData: FormData) {
     },
   });
 
-  const rules = e.fundRules.map((r) => ({
+  const rules = e.fundRules.map((r: any) => ({
     accountRegex: r.accountRegex,
     captureGroup: r.captureGroup,
     enabled: r.enabled,
@@ -65,7 +67,10 @@ export async function uploadTB(formData: FormData) {
     const f = detectFund(ln.account, rules);
     if (!f) continue;
 
-    await db.trialBalanceLine.update({ where: { id: ln.id }, data: { fundCode: f } });
+    await db.trialBalanceLine.update({
+      where: { id: ln.id },
+      data: { fundCode: f },
+    });
 
     await db.fund.upsert({
       where: { engagementId_fundCode: { engagementId, fundCode: f } },
@@ -73,12 +78,21 @@ export async function uploadTB(formData: FormData) {
       create: { engagementId, fundCode: f, fundType: "GOVERNMENTAL" },
     });
   }
+
+  // Make the UI refresh and show the preview immediately
+  revalidatePath(`/dashboard/engagements/${engagementId}/tb`);
+  revalidatePath(`/dashboard/engagements/${engagementId}`);
+  revalidatePath(`/dashboard`);
+  redirect(`/dashboard/engagements/${engagementId}/tb`);
 }
 
 export async function getLatestImport(engagementId: string) {
   const org = await ensureDefaultOrg();
   await db.engagement.findFirstOrThrow({ where: { id: engagementId, organizationId: org.id } });
-  return db.trialBalanceImport.findFirst({ where: { engagementId }, orderBy: { createdAt: "desc" } });
+  return db.trialBalanceImport.findFirst({
+    where: { engagementId },
+    orderBy: { createdAt: "desc" },
+  });
 }
 
 export async function getImportPreview(importId: string) {
