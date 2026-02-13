@@ -1,9 +1,10 @@
 export const dynamic = "force-dynamic";
 
-import { uploadTB, getLatestImport, getImportPreview } from "@/src/server/actions/tb";
+import { uploadTB, getLatestImport, getImportPreview, clearTB } from "@/src/server/actions/tb";
 import { Card, CardContent, CardHeader, CardTitle } from "@/src/components/ui/card";
 import { Button } from "@/src/components/ui/button";
 import { Input } from "@/src/components/ui/input";
+import Link from "next/link";
 
 export default async function TBPage({ params }: { params: { engagementId: string } }) {
   const latest = await getLatestImport(params.engagementId);
@@ -17,15 +18,36 @@ export default async function TBPage({ params }: { params: { engagementId: strin
         </CardHeader>
         <CardContent className="space-y-3">
           <p className="text-sm text-gray-500">
-            Accepted: .csv, .xlsx, .xls. Columns should include Account, Description, Final Balance (or Ending Balance),
-            plus optional Group/Subgroup.
+            Accepts single signed balance (Final Balance / Balance) or Debit/Credit.
+            We will convert Debit/Credit to a single signed final balance (Debit − Credit).
           </p>
 
-          <form action={uploadTB} className="space-y-3">
-            <input type="hidden" name="engagementId" value={params.engagementId} />
-            <Input name="file" type="file" accept=".csv,.xlsx,.xls" required />
-            <Button type="submit">Import</Button>
-          </form>
+          <div className="flex flex-wrap gap-2">
+            <form action={uploadTB} className="flex items-center gap-2">
+              <input type="hidden" name="engagementId" value={params.engagementId} />
+              <Input name="file" type="file" accept=".csv,.xlsx,.xls" required />
+              <Button type="submit">Import</Button>
+            </form>
+
+            {latest ? (
+              <form action={clearTB}>
+                <input type="hidden" name="engagementId" value={params.engagementId} />
+                <Button type="submit" variant="secondary">
+                  Clear TB
+                </Button>
+              </form>
+            ) : null}
+
+            <Link href={`/dashboard/engagements/${params.engagementId}`}>
+              <Button variant="ghost">Back</Button>
+            </Link>
+          </div>
+
+          {latest ? (
+            <div className="text-xs text-gray-500">Latest: {latest.filename}</div>
+          ) : (
+            <div className="text-xs text-gray-500">No TB yet</div>
+          )}
         </CardContent>
       </Card>
 
@@ -91,7 +113,8 @@ export default async function TBPage({ params }: { params: { engagementId: strin
               </div>
 
               <p className="text-xs text-gray-500">
-                Next: add a “does this TB need to net to 0?” setting + warnings if not.
+                Note: imports are saved historically, but this screen shows the latest import.
+                Use Clear TB to reset the engagement to “no TB”.
               </p>
             </div>
           )}
