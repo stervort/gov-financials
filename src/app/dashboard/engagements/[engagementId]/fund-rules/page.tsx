@@ -1,3 +1,6 @@
+export const dynamic = "force-dynamic";
+
+
 import { listFundRules, createFundRule, toggleFundRule, rerunFundDetection } from "@/src/server/actions/fundRules";
 import { Card, CardContent, CardHeader, CardTitle } from "@/src/components/ui/card";
 import { Input } from "@/src/components/ui/input";
