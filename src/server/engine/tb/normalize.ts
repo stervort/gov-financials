@@ -17,6 +17,13 @@ function toNumber(v: any) {
   return isParen ? -n : n;
 }
 
+function firstDefined(obj: any, keys: string[]) {
+  for (const k of keys) {
+    if (obj[k] !== undefined && obj[k] !== null && String(obj[k]).trim() !== "") return obj[k];
+  }
+  return undefined;
+}
+
 export type TBRow = {
   account: string;
   description?: string;
@@ -25,33 +32,57 @@ export type TBRow = {
   auditSubgroup?: string;
 };
 
-function mapAnyRecordToTBRows(records: Record<string, any>[]): TBRow[] {
-  const out: TBRow[] = [];
+function recordToRow(r: Record<string, any>): TBRow | null {
+  const account = String(
+    firstDefined(r, ["account", "acct", "account number", "account #", "account_no"]) ?? ""
+  ).trim();
+  if (!account) return null;
 
-  for (const r of records) {
-    const account = (r["account"] ?? r["acct"] ?? r["account number"] ?? r["account #"] ?? "")
-      .toString()
-      .trim();
-    if (!account) continue;
+  const desc = firstDefined(r, ["description", "desc", "account description"]);
 
-    const desc = r["description"] ?? r["desc"] ?? r["account description"];
-    const fb =
-      r["final balance"] ??
-      r["final_balance"] ??
-      r["ending balance"] ??
-      r["balance"] ??
-      r["final"] ??
-      r["amount"];
+  // Prefer a true final balance column if present
+  const fb = firstDefined(r, [
+    "final balance",
+    "final_balance",
+    "ending balance",
+    "ending_balance",
+    "final",
+    "balance",
+    "amount",
+    "net"
+  ]);
 
-    out.push({
-      account,
-      description: desc ? String(desc).trim() : undefined,
-      finalBalance: toNumber(fb),
-      auditGroup: r["group"] ? String(r["group"]).trim() : undefined,
-      auditSubgroup: r["subgroup"] ? String(r["subgroup"]).trim() : undefined,
-    });
+  // If no final balance column, compute from Debit/Credit
+  const debit = firstDefined(r, ["debit", "debits", "dr", "debit amount", "debit_amount"]);
+  const credit = firstDefined(r, ["credit", "credits", "cr", "credit amount", "credit_amount"]);
+
+  let finalBalance = 0;
+
+  if (fb !== undefined) {
+    finalBalance = toNumber(fb);
+  } else if (debit !== undefined || credit !== undefined) {
+    const d = Math.abs(toNumber(debit));
+    const c = Math.abs(toNumber(credit));
+    finalBalance = d - c; // single signed: debit positive, credit negative
+  } else {
+    finalBalance = 0;
   }
 
+  return {
+    account,
+    description: desc ? String(desc).trim() : undefined,
+    finalBalance,
+    auditGroup: r["group"] ? String(r["group"]).trim() : undefined,
+    auditSubgroup: r["subgroup"] ? String(r["subgroup"]).trim() : undefined,
+  };
+}
+
+function mapRecords(records: Record<string, any>[]): TBRow[] {
+  const out: TBRow[] = [];
+  for (const r of records) {
+    const row = recordToRow(r);
+    if (row) out.push(row);
+  }
   return out;
 }
 
@@ -63,8 +94,7 @@ export function parseTBFromCSV(text: string): TBRow[] {
     relax_column_count: true,
     bom: true,
   });
-
-  return mapAnyRecordToTBRows(rows);
+  return mapRecords(rows);
 }
 
 export function parseTBFromExcel(buffer: Buffer): TBRow[] {
@@ -73,28 +103,24 @@ export function parseTBFromExcel(buffer: Buffer): TBRow[] {
   if (!sheetName) return [];
 
   const ws = wb.Sheets[sheetName];
-
-  // Pull as a 2D array so we can normalize headers exactly like CSV
   const matrix = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1, defval: "" });
-
   if (!matrix || matrix.length < 2) return [];
 
-  const headerRow = (matrix[0] ?? []).map((h: any) => norm(String(h ?? "")));
+  const headers = (matrix[0] ?? []).map((h: any) => norm(String(h ?? "")));
   const records: Record<string, any>[] = [];
 
   for (let i = 1; i < matrix.length; i++) {
     const row = matrix[i] ?? [];
-    // skip completely empty rows
     if (row.every((c: any) => String(c ?? "").trim() === "")) continue;
 
     const obj: Record<string, any> = {};
-    for (let c = 0; c < headerRow.length; c++) {
-      const key = headerRow[c];
+    for (let c = 0; c < headers.length; c++) {
+      const key = headers[c];
       if (!key) continue;
       obj[key] = row[c];
     }
     records.push(obj);
   }
 
-  return mapAnyRecordToTBRows(records);
+  return mapRecords(records);
 }
