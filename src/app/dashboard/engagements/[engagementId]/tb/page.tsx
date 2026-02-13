@@ -1,14 +1,14 @@
 export const dynamic = "force-dynamic";
 
+import Link from "next/link";
 import { uploadTB, getLatestImport, getImportPreview, clearTB } from "@/src/server/actions/tb";
 import { Card, CardContent, CardHeader, CardTitle } from "@/src/components/ui/card";
 import { Button } from "@/src/components/ui/button";
 import { Input } from "@/src/components/ui/input";
-import Link from "next/link";
 
 export default async function TBPage({ params }: { params: { engagementId: string } }) {
   const latest = await getLatestImport(params.engagementId);
-  const preview = latest ? await getImportPreview(latest.id) : null;
+  const preview = latest && latest.status === "IMPORTED" ? await getImportPreview(latest.id) : null;
 
   return (
     <div className="space-y-6">
@@ -19,7 +19,7 @@ export default async function TBPage({ params }: { params: { engagementId: strin
         <CardContent className="space-y-3">
           <p className="text-sm text-gray-500">
             Accepts single signed balance (Final Balance / Balance) or Debit/Credit.
-            We will convert Debit/Credit to a single signed final balance (Debit − Credit).
+            If no headers are detected, we’ll ask you to map columns.
           </p>
 
           <div className="flex flex-wrap gap-2">
@@ -44,7 +44,21 @@ export default async function TBPage({ params }: { params: { engagementId: strin
           </div>
 
           {latest ? (
-            <div className="text-xs text-gray-500">Latest: {latest.filename}</div>
+            <div className="text-xs text-gray-500">
+              Latest: {latest.filename} ({latest.status})
+              {latest.status === "NEEDS_MAPPING" ? (
+                <>
+                  {" "}
+                  •{" "}
+                  <Link
+                    className="underline"
+                    href={`/dashboard/engagements/${params.engagementId}/tb/map/${latest.id}`}
+                  >
+                    Finish mapping
+                  </Link>
+                </>
+              ) : null}
+            </div>
           ) : (
             <div className="text-xs text-gray-500">No TB yet</div>
           )}
@@ -56,8 +70,21 @@ export default async function TBPage({ params }: { params: { engagementId: strin
           <CardTitle>Latest Import Preview</CardTitle>
         </CardHeader>
         <CardContent>
-          {!preview ? (
+          {!latest ? (
             <p className="text-sm text-gray-500">No import yet.</p>
+          ) : latest.status === "NEEDS_MAPPING" ? (
+            <p className="text-sm text-gray-500">
+              Latest import needs column mapping. Click{" "}
+              <Link
+                className="underline"
+                href={`/dashboard/engagements/${params.engagementId}/tb/map/${latest.id}`}
+              >
+                Finish mapping
+              </Link>
+              .
+            </p>
+          ) : !preview ? (
+            <p className="text-sm text-gray-500">No preview available.</p>
           ) : (
             <div className="space-y-4">
               <div className="grid gap-2 md:grid-cols-3">
@@ -113,8 +140,7 @@ export default async function TBPage({ params }: { params: { engagementId: strin
               </div>
 
               <p className="text-xs text-gray-500">
-                Note: imports are saved historically, but this screen shows the latest import.
-                Use Clear TB to reset the engagement to “no TB”.
+                This shows the latest import. Clear TB deletes all TB imports and derived funds.
               </p>
             </div>
           )}
