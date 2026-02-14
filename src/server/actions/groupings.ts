@@ -18,93 +18,141 @@ export async function getLatestImportedTB(engagementId: string) {
   });
 }
 
-export async function getGroupingStats(engagementId: string) {
+export async function getGroupingCounts(engagementId: string) {
+  const org = await ensureDefaultOrg();
+  await assertEngagement(org.id, engagementId);
+
+  const latest = await getLatestImportedTB(engagementId);
+  if (!latest) return { total: 0, grouped: 0, ungrouped: 0 };
+
+  const total = await db.trialBalanceLine.count({ where: { importId: latest.id } });
+  const grouped = await db.trialBalanceLine.count({
+    where: {
+      importId: latest.id,
+      OR: [
+        { auditGroup: { not: null } },
+        { auditSubgroup: { not: null } },
+      ],
+    },
+  });
+  const ungrouped = total - grouped;
+  return { total, grouped, ungrouped };
+}
+
+export async function listGroupingLines(
+  engagementId: string,
+  opts?: {
+    page?: number;
+    pageSize?: number;
+    q?: string;
+    ungroupedOnly?: boolean;
+  }
+) {
   const org = await ensureDefaultOrg();
   await assertEngagement(org.id, engagementId);
 
   const latest = await getLatestImportedTB(engagementId);
   if (!latest) {
-    return { importId: null as string | null, grouped: 0, ungrouped: 0, total: 0 };
+    return {
+      importId: null as string | null,
+      total: 0,
+      page: 1,
+      pageSize: 50,
+      lines: [] as any[],
+      fundsByCode: {} as Record<string, { fundCode: string; name: string | null }>,
+    };
   }
 
-  const total = await db.trialBalanceLine.count({ where: { importId: latest.id } });
+  const page = Math.max(1, Math.floor(opts?.page ?? 1));
+  const pageSize = Math.min(500, Math.max(25, Math.floor(opts?.pageSize ?? 50)));
+  const q = (opts?.q ?? "").trim();
+  const ungroupedOnly = !!opts?.ungroupedOnly;
 
-  const ungrouped = await db.trialBalanceLine.count({
-    where: { importId: latest.id, OR: [{ auditGroup: null }, { auditGroup: "" }] },
+  const where: any = { importId: latest.id };
+
+  if (ungroupedOnly) {
+    where.AND = [
+      {
+        AND: [
+          { OR: [{ auditGroup: null }, { auditGroup: "" }] },
+          { OR: [{ auditSubgroup: null }, { auditSubgroup: "" }] },
+        ],
+      },
+    ];
+  }
+
+  if (q) {
+    where.AND = [
+      ...(where.AND ?? []),
+      {
+        OR: [
+          { account: { contains: q, mode: "insensitive" } },
+          { description: { contains: q, mode: "insensitive" } },
+          { auditGroup: { contains: q, mode: "insensitive" } },
+          { auditSubgroup: { contains: q, mode: "insensitive" } },
+          { fundCode: { contains: q, mode: "insensitive" } },
+        ],
+      },
+    ];
+  }
+
+  const total = await db.trialBalanceLine.count({ where });
+
+  const lines = await db.trialBalanceLine.findMany({
+    where,
+    orderBy: { account: "asc" },
+    skip: (page - 1) * pageSize,
+    take: pageSize,
   });
 
-  return { importId: latest.id, grouped: total - ungrouped, ungrouped, total };
+  const funds = await db.fund.findMany({
+    where: { engagementId },
+    select: { fundCode: true, name: true },
+  });
+  const fundsByCode: Record<string, { fundCode: string; name: string | null }> = {};
+  for (const f of funds) fundsByCode[f.fundCode] = f;
+
+  return {
+    importId: latest.id,
+    total,
+    page,
+    pageSize,
+    lines,
+    fundsByCode,
+  };
 }
 
-export async function listGroupingLines(engagementId: string) {
-  const org = await ensureDefaultOrg();
-  await assertEngagement(org.id, engagementId);
-
-  const latest = await getLatestImportedTB(engagementId);
-  if (!latest) return { importId: null as string | null, lines: [] as any[], totalLines: 0 };
-
-  // Quick fix: bump cap to 10,000
-  const TAKE = 10000;
-
-  const [totalLines, lines] = await Promise.all([
-    db.trialBalanceLine.count({ where: { importId: latest.id } }),
-    db.trialBalanceLine.findMany({
-      where: { importId: latest.id },
-      orderBy: { account: "asc" },
-      take: TAKE,
-    }),
-  ]);
-
-  return { importId: latest.id, lines, totalLines };
-}
-
-const BulkEdit = z.object({
+const BulkUpdate = z.object({
   engagementId: z.string().min(1),
-  editsJson: z.string().min(2),
+  updates: z.array(
+    z.object({
+      lineId: z.string().min(1),
+      auditGroup: z.string().optional().nullable(),
+      auditSubgroup: z.string().optional().nullable(),
+    })
+  ),
 });
 
-const EditItem = z.object({
-  lineId: z.string().min(1),
-  auditGroup: z.string().optional().nullable(),
-  auditSubgroup: z.string().optional().nullable(),
-});
-
-export async function bulkUpdateGroupings(formData: FormData) {
+export async function updateGroupingsBulk(payload: {
+  engagementId: string;
+  updates: Array<{ lineId: string; auditGroup?: string | null; auditSubgroup?: string | null }>;
+}) {
   const org = await ensureDefaultOrg();
-
-  const v = BulkEdit.parse({
-    engagementId: String(formData.get("engagementId") ?? ""),
-    editsJson: String(formData.get("editsJson") ?? ""),
-  });
-
+  const v = BulkUpdate.parse(payload);
   await assertEngagement(org.id, v.engagementId);
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(v.editsJson);
-  } catch {
-    throw new Error("Could not parse edits JSON.");
-  }
-
-  const edits = z.array(EditItem).parse(parsed);
-
-  // nothing to do
-  if (edits.length === 0) return;
-
-  await db.$transaction(async (tx) => {
-    for (const e of edits) {
-      const auditGroup = (e.auditGroup ?? "").trim();
-      const auditSubgroup = (e.auditSubgroup ?? "").trim();
-
-      await tx.trialBalanceLine.update({
-        where: { id: e.lineId },
+  // transaction: apply all updates
+  await db.$transaction(
+    v.updates.map((u) =>
+      db.trialBalanceLine.update({
+        where: { id: u.lineId },
         data: {
-          auditGroup: auditGroup || null,
-          auditSubgroup: auditSubgroup || null,
+          auditGroup: (u.auditGroup ?? "").trim() || null,
+          auditSubgroup: (u.auditSubgroup ?? "").trim() || null,
         },
-      });
-    }
-  });
+      })
+    )
+  );
 
   revalidatePath(`/dashboard/engagements/${v.engagementId}/groupings`);
   revalidatePath(`/dashboard/engagements/${v.engagementId}`);
