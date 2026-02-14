@@ -38,10 +38,30 @@ export async function getGroupingCounts(engagementId: string) {
   return { total, grouped, ungrouped };
 }
 
+export type GroupingLineRow = {
+  id: string;
+  account: string;
+  description: string | null;
+  finalBalance: number;
+  auditGroup: string | null;
+  auditSubgroup: string | null;
+  fundCode: string | null;
+};
+
+export type GroupingLinesResult = {
+  importId: string | null;
+  // map for displaying as "10 - General Fund"
+  fundsByCode: Record<string, { fundCode: string; name: string | null }>;
+  page: number;
+  pageSize: number;
+  total: number;
+  lines: GroupingLineRow[];
+};
+
 export async function listGroupingLines(
   engagementId: string,
   opts?: { page?: number; pageSize?: number; q?: string; ungroupedOnly?: boolean }
-) {
+): Promise<GroupingLinesResult> {
   const org = await ensureDefaultOrg();
   await assertEngagement(org.id, engagementId);
 
@@ -61,7 +81,7 @@ export async function listGroupingLines(
       page,
       pageSize,
       total: 0,
-      lines: [] as any[],
+      lines: [],
     };
   }
 
@@ -126,7 +146,7 @@ export async function listGroupingLines(
     page,
     pageSize,
     total,
-    lines,
+    lines: lines as GroupingLineRow[],
   };
 }
 
