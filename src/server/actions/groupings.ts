@@ -42,7 +42,7 @@ export type GroupingLineRow = {
   id: string;
   account: string;
   description: string | null;
-  finalBalance: number;
+  finalBalance: number; // UI expects number
   auditGroup: string | null;
   auditSubgroup: string | null;
   fundCode: string | null;
@@ -76,8 +76,8 @@ export async function listGroupingLines(
 
   if (!imp) {
     return {
-      importId: null as string | null,
-      fundsByCode: {} as Record<string, { fundCode: string; name: string | null }>,
+      importId: null,
+      fundsByCode: {},
       page,
       pageSize,
       total: 0,
@@ -93,7 +93,9 @@ export async function listGroupingLines(
   });
 
   const fundsByCode: Record<string, { fundCode: string; name: string | null }> = {};
-  for (const f of funds) fundsByCode[f.fundCode] = { fundCode: f.fundCode, name: f.name ?? null };
+  for (const f of funds) {
+    fundsByCode[f.fundCode] = { fundCode: f.fundCode, name: f.name ?? null };
+  }
 
   // Filtering/search
   const where: any = { importId: imp.id };
@@ -112,12 +114,8 @@ export async function listGroupingLines(
   if (opts?.ungroupedOnly) {
     // only show lines where BOTH audit group/subgroup are blank
     where.AND = [
-      {
-        OR: [{ auditGroup: null }, { auditGroup: "" }],
-      },
-      {
-        OR: [{ auditSubgroup: null }, { auditSubgroup: "" }],
-      },
+      { OR: [{ auditGroup: null }, { auditGroup: "" }] },
+      { OR: [{ auditSubgroup: null }, { auditSubgroup: "" }] },
     ];
   }
 
@@ -132,7 +130,7 @@ export async function listGroupingLines(
         id: true,
         account: true,
         description: true,
-        finalBalance: true,
+        finalBalance: true, // Prisma Decimal
         auditGroup: true,
         auditSubgroup: true,
         fundCode: true,
@@ -140,13 +138,24 @@ export async function listGroupingLines(
     }),
   ]);
 
+  // ✅ FIX: Convert Prisma Decimal -> number for the UI
+  const normalized: GroupingLineRow[] = lines.map((l) => ({
+    id: l.id,
+    account: l.account,
+    description: l.description ?? null,
+    finalBalance: Number(l.finalBalance),
+    auditGroup: l.auditGroup ?? null,
+    auditSubgroup: l.auditSubgroup ?? null,
+    fundCode: l.fundCode ?? null,
+  }));
+
   return {
     importId: imp.id,
     fundsByCode,
     page,
     pageSize,
     total,
-    lines: lines as GroupingLineRow[],
+    lines: normalized,
   };
 }
 
