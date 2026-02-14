@@ -3,7 +3,7 @@ export const dynamic = "force-dynamic";
 import Link from "next/link";
 import { getEngagement } from "@/src/server/actions/engagements";
 import { getLatestImport, clearTB } from "@/src/server/actions/tb";
-import { getGroupingStats } from "@/src/server/actions/groupings";
+import { getGroupingCounts } from "@/src/server/actions/groupings";
 import { Card, CardContent, CardHeader, CardTitle } from "@/src/components/ui/card";
 import { Button } from "@/src/components/ui/button";
 
@@ -11,36 +11,27 @@ export default async function EngagementHome({ params }: { params: { engagementI
   const e = await getEngagement(params.engagementId);
   const latest = await getLatestImport(params.engagementId);
 
-  // after mapping+finalize we set status to "IMPORTED"
   const tbImported = !!latest && latest.status === "IMPORTED";
-
-  const groupingStats = tbImported ? await getGroupingStats(params.engagementId) : null;
+  const counts = tbImported ? await getGroupingCounts(e.id) : { total: 0, grouped: 0, ungrouped: 0 };
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold">{e.name}</h1>
-        <div className="text-sm text-gray-500">
-          FYE: {new Date(e.fiscalYearEnd).toLocaleDateString()}
-        </div>
+        <div className="text-sm text-gray-500">FYE: {new Date(e.fiscalYearEnd).toLocaleDateString()}</div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
+        {/* 1) TB */}
         <Card>
           <CardHeader>
-            <CardTitle>1) Trial Balance</CardTitle>
+            <CardTitle>1) Trial Balance Import</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="flex gap-2 flex-wrap">
               <Link href={`/dashboard/engagements/${e.id}/tb`}>
-                <Button>Upload</Button>
+                <Button>Upload / Map</Button>
               </Link>
-
-              {latest && latest.status === "NEEDS_MAPPING" ? (
-                <Link href={`/dashboard/engagements/${e.id}/tb/map/${latest.id}`}>
-                  <Button variant="secondary">Map</Button>
-                </Link>
-              ) : null}
 
               {latest ? (
                 <form action={clearTB}>
@@ -54,66 +45,61 @@ export default async function EngagementHome({ params }: { params: { engagementI
 
             {latest ? (
               <div className="text-xs text-gray-500">
-                Latest: {latest.filename}{" "}
-                <span className={tbImported ? "text-green-700" : "text-amber-700"}>
-                  {tbImported ? " (imported)" : " (needs mapping)"}
-                </span>
+                Latest: <span className="font-medium">{latest.filename}</span> • Status:{" "}
+                <span className="font-medium">{latest.status}</span> • Rows:{" "}
+                <span className="font-medium">{latest.rowCount}</span> • Total:{" "}
+                <span className="font-medium">{Number(latest.totalBalance).toFixed(2)}</span>
               </div>
             ) : (
-              <div className="text-xs text-gray-500">No TB yet</div>
+              <div className="text-xs text-gray-500">No TB uploaded yet.</div>
             )}
-
-            {!tbImported ? (
-              <div className="text-xs text-amber-700">
-                Next steps are locked until the latest Trial Balance is imported.
-              </div>
-            ) : null}
           </CardContent>
         </Card>
 
-        <Card>
+        {/* 2) Funds */}
+        <Card className={!tbImported ? "opacity-60" : ""}>
           <CardHeader>
-            <CardTitle>2) Account Groupings</CardTitle>
+            <CardTitle>2) Funds Setup</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {groupingStats ? (
-              <div className="text-sm">
-                <div>
-                  <span className="font-medium">Grouped:</span> {groupingStats.grouped.toLocaleString()}
-                </div>
-                <div className={groupingStats.ungrouped > 0 ? "text-red-700" : ""}>
-                  <span className="font-medium">Ungrouped:</span> {groupingStats.ungrouped.toLocaleString()}
-                </div>
-              </div>
-            ) : (
-              <div className="text-sm text-gray-500">Upload and import a TB to see grouping status.</div>
-            )}
-
-            <Link href={`/dashboard/engagements/${e.id}/groupings`}>
-              <Button variant="secondary" disabled={!tbImported}>
-                Open
+            <div className="text-sm text-gray-600">
+              Create/edit funds, set fund types, names, majors, and review detected fund codes.
+            </div>
+            <Link href={`/dashboard/engagements/${e.id}/funds`}>
+              <Button disabled={!tbImported} variant="secondary">
+                Open Funds
               </Button>
             </Link>
+            {!tbImported ? <div className="text-xs text-gray-500">Upload + finalize TB first.</div> : null}
           </CardContent>
         </Card>
 
-        <Card>
+        {/* 3) Groupings */}
+        <Card className={!tbImported ? "opacity-60" : ""}>
           <CardHeader>
-            <CardTitle>3) Fund Setup</CardTitle>
+            <CardTitle>3) Account Groupings</CardTitle>
           </CardHeader>
-          <CardContent>
-            <Link href={`/dashboard/engagements/${e.id}/funds`}>
-              <Button variant="secondary" disabled={!tbImported}>
-                Open
+          <CardContent className="space-y-3">
+            <div className="text-sm text-gray-600">
+              Review/edit audit groupings. Shows Fund, Amount, and grouping fields.
+            </div>
+
+            {tbImported ? (
+              <div className="text-xs text-gray-600">
+                Grouped: <span className="font-medium">{counts.grouped}</span> • Ungrouped:{" "}
+                <span className="font-medium">{counts.ungrouped}</span>
+              </div>
+            ) : null}
+
+            <Link href={`/dashboard/engagements/${e.id}/groupings`}>
+              <Button disabled={!tbImported} variant="secondary">
+                Open Groupings
               </Button>
             </Link>
+            {!tbImported ? <div className="text-xs text-gray-500">Upload + finalize TB first.</div> : null}
           </CardContent>
         </Card>
       </div>
-
-      <Link href="/dashboard">
-        <Button variant="secondary">Back</Button>
-      </Link>
     </div>
   );
 }
