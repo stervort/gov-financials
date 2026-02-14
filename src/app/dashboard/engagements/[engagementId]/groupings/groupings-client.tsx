@@ -8,7 +8,7 @@ type Line = {
   id: string;
   account: string;
   description: string | null;
-  finalBalance: any; // Prisma Decimal serialized
+  finalBalance: any;
   auditGroup: string | null;
   auditSubgroup: string | null;
 };
@@ -16,13 +16,14 @@ type Line = {
 type Props = {
   engagementId: string;
   lines: Line[];
-  updateLineGrouping: (formData: FormData) => Promise<void>;
+  totalLines: number;
+  bulkUpdateGroupings: (formData: FormData) => Promise<void>;
 };
 
 type Filters = {
   account: string;
   description: string;
-  balance: string; // supports: >1000, <0, =0, 100..200, or plain substring
+  balance: string; // >0, <0, =0, 100..200, etc
   auditGroup: string;
   auditSubgroup: string;
   onlyUngrouped: boolean;
@@ -32,7 +33,6 @@ function parseBalanceFilter(expr: string): ((n: number) => boolean) | null {
   const s = expr.trim();
   if (!s) return null;
 
-  // range: 100..200
   const mRange = s.match(/^(-?\d+(?:\.\d+)?)\s*\.\.\s*(-?\d+(?:\.\d+)?)$/);
   if (mRange) {
     const a = Number(mRange[1]);
@@ -42,7 +42,6 @@ function parseBalanceFilter(expr: string): ((n: number) => boolean) | null {
     return (n) => n >= lo && n <= hi;
   }
 
-  // comparisons: >, >=, <, <=, =
   const mComp = s.match(/^(>=|<=|>|<|=)\s*(-?\d+(?:\.\d+)?)$/);
   if (mComp) {
     const op = mComp[1];
@@ -54,11 +53,10 @@ function parseBalanceFilter(expr: string): ((n: number) => boolean) | null {
     return (n) => n === v;
   }
 
-  // plain text: treat as substring on formatted number
   return (n) => String(n).includes(s);
 }
 
-export default function GroupingsClient({ engagementId, lines, updateLineGrouping }: Props) {
+export default function GroupingsClient({ engagementId, lines, totalLines, bulkUpdateGroupings }: Props) {
   const [filters, setFilters] = useState<Filters>({
     account: "",
     description: "",
@@ -68,11 +66,37 @@ export default function GroupingsClient({ engagementId, lines, updateLineGroupin
     onlyUngrouped: false,
   });
 
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<{ auditGroup: string; auditSubgroup: string }>({
-    auditGroup: "",
-    auditSubgroup: "",
+  // Edit mode & staged edits
+  const [editMode, setEditMode] = useState(false);
+
+  // Original values snapshot for cancel behavior
+  const originalById = useMemo(() => {
+    const m = new Map<string, { auditGroup: string; auditSubgroup: string }>();
+    for (const l of lines) {
+      m.set(l.id, {
+        auditGroup: l.auditGroup ?? "",
+        auditSubgroup: l.auditSubgroup ?? "",
+      });
+    }
+    return m;
+  }, [lines]);
+
+  // Staged values (what user is editing)
+  const [draftById, setDraftById] = useState<Record<string, { auditGroup: string; auditSubgroup: string }>>(() => {
+    const o: Record<string, { auditGroup: string; auditSubgroup: string }> = {};
+    for (const l of lines) {
+      o[l.id] = { auditGroup: l.auditGroup ?? "", auditSubgroup: l.auditSubgroup ?? "" };
+    }
+    return o;
   });
+
+  // When lines change (new import), reset draft
+  // (not fancy: if you want, we can preserve if same import)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // @ts-ignore
+  if (Object.keys(draftById).length === 0 && lines.length > 0) {
+    // no-op
+  }
 
   const balancePredicate = useMemo(() => parseBalanceFilter(filters.balance), [filters.balance]);
 
@@ -86,13 +110,14 @@ export default function GroupingsClient({ engagementId, lines, updateLineGroupin
     };
 
     return lines.filter((l) => {
-      const ungrouped = !l.auditGroup || !l.auditGroup.trim();
-      if (f.onlyUngrouped && !ungrouped) return false;
+      const d = draftById[l.id] ?? { auditGroup: l.auditGroup ?? "", auditSubgroup: l.auditSubgroup ?? "" };
+      const ungrouped = !d.auditGroup || !d.auditGroup.trim();
 
+      if (f.onlyUngrouped && !ungrouped) return false;
       if (f.account && !l.account.toLowerCase().includes(f.account)) return false;
       if (f.description && !(l.description ?? "").toLowerCase().includes(f.description)) return false;
-      if (f.auditGroup && !(l.auditGroup ?? "").toLowerCase().includes(f.auditGroup)) return false;
-      if (f.auditSubgroup && !(l.auditSubgroup ?? "").toLowerCase().includes(f.auditSubgroup)) return false;
+      if (f.auditGroup && !(d.auditGroup ?? "").toLowerCase().includes(f.auditGroup)) return false;
+      if (f.auditSubgroup && !(d.auditSubgroup ?? "").toLowerCase().includes(f.auditSubgroup)) return false;
 
       if (balancePredicate) {
         const n = Number(l.finalBalance ?? 0);
@@ -101,32 +126,79 @@ export default function GroupingsClient({ engagementId, lines, updateLineGroupin
 
       return true;
     });
-  }, [lines, filters, balancePredicate]);
+  }, [lines, filters, balancePredicate, draftById]);
 
   const counts = useMemo(() => {
     const total = lines.length;
-    const ungrouped = lines.filter((l) => !l.auditGroup || !l.auditGroup.trim()).length;
+    const ungrouped = lines.filter((l) => {
+      const d = draftById[l.id] ?? { auditGroup: l.auditGroup ?? "", auditSubgroup: l.auditSubgroup ?? "" };
+      return !d.auditGroup || !d.auditGroup.trim();
+    }).length;
     return { total, ungrouped, grouped: total - ungrouped, showing: filtered.length };
-  }, [lines, filtered]);
+  }, [lines, filtered, draftById]);
 
-  function startEdit(l: Line) {
-    setEditingId(l.id);
-    setDraft({
-      auditGroup: l.auditGroup ?? "",
-      auditSubgroup: l.auditSubgroup ?? "",
-    });
+  const isDirty = useMemo(() => {
+    for (const l of lines) {
+      const o = originalById.get(l.id);
+      const d = draftById[l.id];
+      if (!o || !d) continue;
+      if ((o.auditGroup ?? "") !== (d.auditGroup ?? "")) return true;
+      if ((o.auditSubgroup ?? "") !== (d.auditSubgroup ?? "")) return true;
+    }
+    return false;
+  }, [lines, draftById, originalById]);
+
+  function onEdit() {
+    setEditMode(true);
   }
 
-  function cancelEdit() {
-    setEditingId(null);
-    setDraft({ auditGroup: "", auditSubgroup: "" });
+  function onCancel() {
+    // revert staged edits back to original snapshot
+    const next: Record<string, { auditGroup: string; auditSubgroup: string }> = { ...draftById };
+    for (const l of lines) {
+      const o = originalById.get(l.id);
+      if (!o) continue;
+      next[l.id] = { auditGroup: o.auditGroup ?? "", auditSubgroup: o.auditSubgroup ?? "" };
+    }
+    setDraftById(next);
+    setEditMode(false);
+  }
+
+  async function onSave() {
+    // only send changed rows
+    const edits: Array<{ lineId: string; auditGroup: string; auditSubgroup: string }> = [];
+
+    for (const l of lines) {
+      const o = originalById.get(l.id);
+      const d = draftById[l.id];
+      if (!o || !d) continue;
+
+      if ((o.auditGroup ?? "") !== (d.auditGroup ?? "") || (o.auditSubgroup ?? "") !== (d.auditSubgroup ?? "")) {
+        edits.push({
+          lineId: l.id,
+          auditGroup: d.auditGroup ?? "",
+          auditSubgroup: d.auditSubgroup ?? "",
+        });
+      }
+    }
+
+    const fd = new FormData();
+    fd.set("engagementId", engagementId);
+    fd.set("editsJson", JSON.stringify(edits));
+
+    await bulkUpdateGroupings(fd);
+
+    // After server action completes, the page will revalidate and refresh.
+    // We can also lock immediately for the UX.
+    setEditMode(false);
   }
 
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap gap-3 items-center text-sm">
         <div>
-          <span className="font-medium">Total:</span> {counts.total.toLocaleString()}
+          <span className="font-medium">Loaded:</span> {counts.total.toLocaleString()}{" "}
+          <span className="text-gray-500">(DB total {totalLines.toLocaleString()})</span>
         </div>
         <div>
           <span className="font-medium">Grouped:</span> {counts.grouped.toLocaleString()}
@@ -144,8 +216,30 @@ export default function GroupingsClient({ engagementId, lines, updateLineGroupin
             onChange={(e) => setFilters((p) => ({ ...p, onlyUngrouped: e.target.checked }))}
           />
           <label htmlFor="onlyUngrouped">Only ungrouped</label>
+
+          {/* Top-right controls */}
+          {!editMode ? (
+            <Button variant="secondary" onClick={onEdit}>
+              Edit
+            </Button>
+          ) : (
+            <>
+              <Button variant="secondary" onClick={onSave} disabled={!isDirty}>
+                Save
+              </Button>
+              <Button variant="ghost" onClick={onCancel}>
+                Cancel
+              </Button>
+            </>
+          )}
         </div>
       </div>
+
+      {editMode && !isDirty ? (
+        <div className="text-xs text-gray-500">
+          Edit mode is on. Make changes, then Save. (Save enables after you change something.)
+        </div>
+      ) : null}
 
       <div className="overflow-auto border rounded-md">
         <table className="min-w-full text-sm">
@@ -156,7 +250,6 @@ export default function GroupingsClient({ engagementId, lines, updateLineGroupin
               <th className="px-3 py-2 text-right">Balance</th>
               <th className="px-3 py-2">Group</th>
               <th className="px-3 py-2">Subgroup</th>
-              <th className="px-3 py-2 w-[220px]"></th>
             </tr>
             <tr className="text-left border-t">
               <th className="px-3 py-2">
@@ -194,15 +287,13 @@ export default function GroupingsClient({ engagementId, lines, updateLineGroupin
                   placeholder="filter…"
                 />
               </th>
-              <th className="px-3 py-2"></th>
             </tr>
           </thead>
 
           <tbody>
             {filtered.map((l) => {
-              const isUngrouped = !l.auditGroup || !l.auditGroup.trim();
-              const isEditing = editingId === l.id;
-              const formId = `line-${l.id}`;
+              const d = draftById[l.id] ?? { auditGroup: l.auditGroup ?? "", auditSubgroup: l.auditSubgroup ?? "" };
+              const isUngrouped = !d.auditGroup || !d.auditGroup.trim();
 
               return (
                 <tr key={l.id} className={"border-t align-top " + (isUngrouped ? "bg-red-50" : "")}>
@@ -217,48 +308,32 @@ export default function GroupingsClient({ engagementId, lines, updateLineGroupin
 
                   <td className="px-3 py-2">
                     <Input
-                      form={formId}
-                      name="auditGroup"
-                      value={isEditing ? draft.auditGroup : l.auditGroup ?? ""}
-                      onChange={(e) => setDraft((p) => ({ ...p, auditGroup: e.target.value }))}
-                      disabled={!isEditing}
-                      className={!isEditing ? "bg-gray-100" : ""}
+                      value={d.auditGroup}
+                      onChange={(e) =>
+                        setDraftById((p) => ({
+                          ...p,
+                          [l.id]: { ...(p[l.id] ?? { auditGroup: "", auditSubgroup: "" }), auditGroup: e.target.value },
+                        }))
+                      }
+                      disabled={!editMode}
+                      className={!editMode ? "bg-gray-100" : ""}
                       placeholder="e.g., Assets"
                     />
                   </td>
 
                   <td className="px-3 py-2">
                     <Input
-                      form={formId}
-                      name="auditSubgroup"
-                      value={isEditing ? draft.auditSubgroup : l.auditSubgroup ?? ""}
-                      onChange={(e) => setDraft((p) => ({ ...p, auditSubgroup: e.target.value }))}
-                      disabled={!isEditing}
-                      className={!isEditing ? "bg-gray-100" : ""}
+                      value={d.auditSubgroup}
+                      onChange={(e) =>
+                        setDraftById((p) => ({
+                          ...p,
+                          [l.id]: { ...(p[l.id] ?? { auditGroup: "", auditSubgroup: "" }), auditSubgroup: e.target.value },
+                        }))
+                      }
+                      disabled={!editMode}
+                      className={!editMode ? "bg-gray-100" : ""}
                       placeholder="e.g., Cash"
                     />
-                  </td>
-
-                  <td className="px-3 py-2">
-                    <form id={formId} action={updateLineGrouping} className="flex items-center gap-2">
-                      <input type="hidden" name="engagementId" value={engagementId} />
-                      <input type="hidden" name="lineId" value={l.id} />
-
-                      {isEditing ? (
-                        <>
-                          <Button type="submit" variant="secondary">
-                            Save
-                          </Button>
-                          <Button type="button" variant="ghost" onClick={cancelEdit}>
-                            Cancel
-                          </Button>
-                        </>
-                      ) : (
-                        <Button type="button" variant="secondary" onClick={() => startEdit(l)}>
-                          Edit
-                        </Button>
-                      )}
-                    </form>
                   </td>
                 </tr>
               );
