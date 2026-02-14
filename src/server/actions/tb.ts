@@ -64,32 +64,37 @@ export async function uploadTB(formData: FormData) {
     fileType = "excel";
     matrix = parseExcelToMatrix(buf);
   } else {
-    throw new Error("Unsupported file type. Upload .csv, .xlsx, or .xls");
+    throw new Error("Unsupported file type. Please upload CSV, XLSX, or XLS.");
   }
 
-  if (!matrix || matrix.length === 0) throw new Error("File appears empty.");
+  const suggestedHasHeaders = detectHasHeaders(matrix);
 
-  // Industry-standard UX: always ask the user to confirm header rows + map columns.
-  // We'll *suggest* whether headers are present, but we never auto-import.
-  const hasHeadersSuggested = detectHasHeaders(matrix[0] ?? []);
-
-  // Create staging import, redirect to mapping UI
+  // Create a new import that requires mapping
   const imp = await db.trialBalanceImport.create({
     data: {
       engagementId,
-      filename: file.name,
+      filename: file.name || "upload",
+      fileType,
       status: "NEEDS_MAPPING",
-      fileType: fileType ?? undefined,
-      hasHeaders: hasHeadersSuggested,
-      rawMatrix: matrix,
-      rowCount: 0,
-      totalBalance: 0,
+      suggestedHasHeaders,
+      rawMatrix: matrix as any,
     },
   });
 
   revalidatePath(`/dashboard/engagements/${engagementId}`);
   revalidatePath(`/dashboard/engagements/${engagementId}/tb`);
+  revalidatePath(`/dashboard`);
   redirect(`/dashboard/engagements/${engagementId}/tb/map/${imp.id}`);
+}
+
+export async function getLatestImport(engagementId: string) {
+  const org = await ensureDefaultOrg();
+  await db.engagement.findFirstOrThrow({ where: { id: engagementId, organizationId: org.id } });
+
+  return db.trialBalanceImport.findFirst({
+    where: { engagementId },
+    orderBy: { createdAt: "desc" },
+  });
 }
 
 export async function finalizeTBMapping(formData: FormData) {
@@ -116,9 +121,8 @@ export async function finalizeTBMapping(formData: FormData) {
   // If they say "no headers", we skip 0.
   const hasHeaders = String(formData.get("hasHeaders") ?? "").toLowerCase() === "true";
   const headerRowsToSkipRaw = Number(formData.get("headerRowsToSkip") ?? 0);
-  const headerRowsToSkip = hasHeaders && Number.isFinite(headerRowsToSkipRaw)
-    ? Math.max(0, Math.floor(headerRowsToSkipRaw))
-    : 0;
+  const headerRowsToSkip =
+    hasHeaders && Number.isFinite(headerRowsToSkipRaw) ? Math.max(0, Math.floor(headerRowsToSkipRaw)) : 0;
 
   const dataMatrix = headerRowsToSkip > 0 ? matrix.slice(headerRowsToSkip) : matrix;
 
@@ -183,8 +187,12 @@ export async function finalizeTBMapping(formData: FormData) {
 
   revalidatePath(`/dashboard/engagements/${engagementId}`);
   revalidatePath(`/dashboard/engagements/${engagementId}/tb`);
+  revalidatePath(`/dashboard/engagements/${engagementId}/groupings`);
+  revalidatePath(`/dashboard/engagements/${engagementId}/funds`);
   revalidatePath(`/dashboard`);
-  redirect(`/dashboard/engagements/${engagementId}/tb`);
+
+  // ✅ IMPORTANT: send user back to engagement home (not /tb)
+  redirect(`/dashboard/engagements/${engagementId}`);
 }
 
 export async function clearTB(formData: FormData) {
@@ -215,35 +223,4 @@ export async function clearTB(formData: FormData) {
   revalidatePath(`/dashboard/engagements/${engagementId}/tb`);
   revalidatePath(`/dashboard`);
   redirect(`/dashboard/engagements/${engagementId}`);
-}
-
-export async function getLatestImport(engagementId: string) {
-  const org = await ensureDefaultOrg();
-  await db.engagement.findFirstOrThrow({ where: { id: engagementId, organizationId: org.id } });
-
-  return db.trialBalanceImport.findFirst({
-    where: { engagementId },
-    orderBy: { createdAt: "desc" },
-  });
-}
-
-export async function getImportPreview(importId: string) {
-  return db.trialBalanceImport.findFirstOrThrow({
-    where: { id: importId },
-    include: { lines: { take: 50, orderBy: { account: "asc" } } },
-  });
-}
-
-export async function getImportForMapping(importId: string) {
-  return db.trialBalanceImport.findFirstOrThrow({
-    where: { id: importId },
-    select: {
-      id: true,
-      engagementId: true,
-      filename: true,
-      status: true,
-      rawMatrix: true,
-      hasHeaders: true,
-    },
-  });
 }
