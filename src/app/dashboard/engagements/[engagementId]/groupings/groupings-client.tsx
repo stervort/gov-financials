@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import { updateGroupingsBulk } from "@/src/server/actions/groupings";
 import { Button } from "@/src/components/ui/button";
 import { Input } from "@/src/components/ui/input";
-import { Switch } from "@/src/components/ui/switch";
 
 type Line = {
   id: string;
@@ -50,14 +49,15 @@ export default function GroupingsClient(props: {
   }, [lines]);
 
   const ungroupedCountOnPage = useMemo(() => {
-    return lines.filter(
-      (l) => !(l.auditGroup?.trim() || l.auditSubgroup?.trim())
-    ).length;
+    return lines.filter((l) => !(l.auditGroup?.trim() || l.auditSubgroup?.trim())).length;
   }, [lines]);
 
   function setField(lineId: string, field: "auditGroup" | "auditSubgroup", value: string) {
     setDraft((prev) => {
-      const next = { ...prev, [lineId]: { ...(prev[lineId] ?? { auditGroup: "", auditSubgroup: "" }) } };
+      const next = {
+        ...prev,
+        [lineId]: { ...(prev[lineId] ?? { auditGroup: "", auditSubgroup: "" }) },
+      };
       next[lineId][field] = value;
       return next;
     });
@@ -66,7 +66,12 @@ export default function GroupingsClient(props: {
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
-  function buildUrl(next: { page?: number; pageSize?: number; q?: string; ungroupedOnly?: boolean }) {
+  function buildUrl(next: {
+    page?: number;
+    pageSize?: number;
+    q?: string;
+    ungroupedOnly?: boolean;
+  }) {
     const sp = new URLSearchParams();
     sp.set("page", String(next.page ?? page));
     sp.set("pageSize", String(next.pageSize ?? pageSize));
@@ -94,7 +99,9 @@ export default function GroupingsClient(props: {
 
   function onCancel() {
     const next: Record<string, { auditGroup: string; auditSubgroup: string }> = {};
-    for (const l of lines) next[l.id] = { auditGroup: l.auditGroup ?? "", auditSubgroup: l.auditSubgroup ?? "" };
+    for (const l of lines) {
+      next[l.id] = { auditGroup: l.auditGroup ?? "", auditSubgroup: l.auditSubgroup ?? "" };
+    }
     setDraft(next);
     setDirty(false);
     setIsEditing(false);
@@ -134,28 +141,36 @@ export default function GroupingsClient(props: {
 
       {/* Filters */}
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <form className="flex items-center gap-2" action={buildUrl({ page: 1, q, ungroupedOnly })}>
+        <div className="flex items-center gap-2">
           <Input
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search account, description, fund, group, subgroup..."
             className="w-full md:w-[420px]"
           />
-          <Button type="button" variant="secondary" onClick={() => (window.location.href = buildUrl({ page: 1, q, ungroupedOnly }))}>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => {
+              window.location.href = buildUrl({ page: 1, q, ungroupedOnly });
+            }}
+          >
             Apply
           </Button>
-        </form>
+        </div>
 
-        <div className="flex items-center gap-2">
-          <Switch
+        <label className="flex items-center gap-2 text-sm select-none">
+          <input
+            type="checkbox"
             checked={ungroupedOnly}
-            onCheckedChange={(v) => {
-              setUngroupedOnly(!!v);
-              window.location.href = buildUrl({ page: 1, ungroupedOnly: !!v });
+            onChange={(e) => {
+              const v = e.target.checked;
+              setUngroupedOnly(v);
+              window.location.href = buildUrl({ page: 1, ungroupedOnly: v });
             }}
           />
-          <div className="text-sm">Ungrouped only</div>
-        </div>
+          Ungrouped only
+        </label>
       </div>
 
       {/* Table */}
@@ -165,7 +180,7 @@ export default function GroupingsClient(props: {
             <tr>
               <th className="px-3 py-2 w-[140px]">Account</th>
               <th className="px-3 py-2">Description</th>
-              <th className="px-3 py-2 w-[180px]">Fund</th>
+              <th className="px-3 py-2 w-[200px]">Fund</th>
               <th className="px-3 py-2 w-[180px]">Group</th>
               <th className="px-3 py-2 w-[180px]">Subgroup</th>
               <th className="px-3 py-2 w-[140px] text-right">Amount</th>
@@ -209,7 +224,10 @@ export default function GroupingsClient(props: {
                   </td>
 
                   <td className="px-3 py-2 text-right font-mono">
-                    {Number(l.finalBalance ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {Number(l.finalBalance ?? 0).toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
                   </td>
                 </tr>
               );
