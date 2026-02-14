@@ -228,15 +228,16 @@ export default function TBMapperClient({
             <div className="flex items-center gap-2">
               <div className="text-sm text-gray-600">Map selected column to:</div>
               <Select
-                value={activeColCurrentField ?? ""}
-                onValueChange={(val) => setActiveColToField(val as FieldKey | "")}
-              >
-                {FIELD_OPTIONS.map((o) => (
-                  <option key={o.key} value={o.key}>
-                    {o.label}
-                  </option>
-                ))}
-              </Select>
+  value={activeColCurrentField ?? ""}
+  onChange={(e) => setActiveColToField((e.target as HTMLSelectElement).value as FieldKey | "")}
+>
+  {FIELD_OPTIONS.map((o) => (
+    <option key={o.key} value={o.key}>
+      {o.label}
+    </option>
+  ))}
+</Select>
+
             </div>
 
             <div className="text-xs text-gray-500">
