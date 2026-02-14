@@ -1,61 +1,88 @@
 export const dynamic = "force-dynamic";
 
-import Link from "next/link";
-import { getImportForMapping, finalizeTBMapping } from "@/src/server/actions/tb";
-import { Card, CardContent, CardHeader, CardTitle } from "@/src/components/ui/card";
-import { Button } from "@/src/components/ui/button";
 import TBMapperClient from "./tb-mapper-client";
+import { getImportForMapping, finalizeTBMapping } from "@/src/server/actions/tb";
 
-export default async function TBMapPage({
-  params,
-}: {
-  params: { engagementId: string; importId: string };
-}) {
-  const imp = await getImportForMapping(params.importId);
+type Params = { engagementId: string; importId: string };
 
-  // Basic guard
-  if (imp.engagementId !== params.engagementId) {
-    return (
-      <div className="space-y-4">
-        <p className="text-sm text-red-600">Import does not belong to this engagement.</p>
-        <Link href={`/dashboard/engagements/${params.engagementId}/tb`}>
-          <Button variant="secondary">Back</Button>
-        </Link>
-      </div>
-    );
+export default async function TBMapPage({ params }: { params: Params }) {
+  // Use `any` so we don't get blocked by mismatched server-action return typing.
+  const data: any = await getImportForMapping(params.engagementId, params.importId);
+
+  // Support either shape:
+  // - data.matrix (array of rows)
+  // - data.preview.matrix
+  // - data.rows
+  const matrix: any[][] =
+    data?.matrix ??
+    data?.preview?.matrix ??
+    data?.rows ??
+    [];
+
+  const maxCols =
+    data?.maxCols ??
+    data?.preview?.maxCols ??
+    Math.max(0, ...matrix.map((r) => (Array.isArray(r) ? r.length : 0)));
+
+  // `imp` might be nested or top-level depending on how your action returns it
+  const imp = data?.imp ?? data?.import ?? data ?? {};
+
+  const hasHeaders = Boolean(imp?.hasHeaders ?? imp?.hasHeaderRows ?? false);
+  const headerRowsToSkip = Number(imp?.headerRowsToSkip ?? imp?.headerRows ?? 0) || 0;
+
+  // Existing mapping may be stored on the import, or returned separately
+  const existingMapping =
+    imp?.mapping ??
+    data?.mapping ??
+    {};
+
+  const fileName: string | null = imp?.fileName ?? imp?.originalFileName ?? null;
+
+  // Convert matrix -> preview rows with 1-based row numbers
+  const previewRows = (matrix || []).map((row, idx) => ({
+    rowNumber: idx + 1,
+    cells: (Array.isArray(row) ? row : []).map((c) => (c == null ? "" : String(c))),
+  }));
+
+  async function actionFinalize(payload: {
+    engagementId: string;
+    importId: string;
+    mapping: Record<string, any>;
+    hasHeaders: boolean;
+    headerRowsToSkip: number;
+  }): Promise<{ ok: boolean; error?: string; redirectTo?: string }> {
+    try {
+      const fd = new FormData();
+      fd.set("engagementId", payload.engagementId);
+      fd.set("importId", payload.importId);
+      fd.set("hasHeaders", payload.hasHeaders ? "true" : "false");
+      fd.set("headerRowsToSkip", String(payload.headerRowsToSkip ?? 0));
+      fd.set("mapping", JSON.stringify(payload.mapping ?? {}));
+
+      await finalizeTBMapping(fd);
+
+      return {
+        ok: true,
+        redirectTo: `/dashboard/engagements/${payload.engagementId}`,
+      };
+    } catch (e: any) {
+      return { ok: false, error: e?.message ?? "Finalize failed" };
+    }
   }
 
-  const raw = (imp.rawMatrix ?? []) as any[];
-  const matrix: any[][] = Array.isArray(raw) ? (raw as any[][]) : [];
-
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>Map Trial Balance Columns</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          <p className="text-sm text-gray-600">
-            Industry standard is: <b>choose how many header rows to skip</b>, then <b>map columns</b>.
-            We import all non-blank rows after the header rows you skip.
-          </p>
-          <div className="text-xs text-gray-500">File: {imp.filename}</div>
-        </CardContent>
-      </Card>
-
-      <TBMapperClient
-        engagementId={params.engagementId}
-        importId={params.importId}
-        suggestedHasHeaders={imp.hasHeaders}
-        matrix={matrix}
-        finalizeAction={finalizeTBMapping}
-      />
-
-      <div>
-        <Link href={`/dashboard/engagements/${params.engagementId}/tb`}>
-          <Button variant="ghost">Cancel</Button>
-        </Link>
-      </div>
-    </div>
+    <TBMapperClient
+      engagementId={params.engagementId}
+      importId={params.importId}
+      fileName={fileName}
+      hasHeaders={hasHeaders}
+      headerRowsToSkip={headerRowsToSkip}
+      preview={{
+        maxCols,
+        rows: previewRows,
+      }}
+      existingMapping={existingMapping}
+      actionFinalize={actionFinalize}
+    />
   );
 }
