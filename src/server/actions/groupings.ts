@@ -17,6 +17,27 @@ export async function getLatestImportedTB(engagementId: string) {
   });
 }
 
+export async function getGroupingStats(engagementId: string) {
+  const org = await ensureDefaultOrg();
+  await assertEngagement(org.id, engagementId);
+
+  const latest = await getLatestImportedTB(engagementId);
+  if (!latest) {
+    return { importId: null as string | null, grouped: 0, ungrouped: 0, total: 0 };
+  }
+
+  const total = await db.trialBalanceLine.count({ where: { importId: latest.id } });
+  const ungrouped = await db.trialBalanceLine.count({
+    where: {
+      importId: latest.id,
+      OR: [{ auditGroup: null }, { auditGroup: "" }],
+    },
+  });
+  const grouped = total - ungrouped;
+
+  return { importId: latest.id, grouped, ungrouped, total };
+}
+
 export async function listGroupingLines(engagementId: string) {
   const org = await ensureDefaultOrg();
   await assertEngagement(org.id, engagementId);
@@ -24,10 +45,12 @@ export async function listGroupingLines(engagementId: string) {
   const latest = await getLatestImportedTB(engagementId);
   if (!latest) return { importId: null as string | null, lines: [] as any[] };
 
+  // NOTE: we keep this capped for now so the page stays fast.
+  // If you hit the limit on a real client, we'll add paging + server-side filtering.
   const lines = await db.trialBalanceLine.findMany({
     where: { importId: latest.id },
     orderBy: { account: "asc" },
-    take: 500,
+    take: 2000,
   });
 
   return { importId: latest.id, lines };
@@ -53,4 +76,5 @@ export async function updateLineGrouping(formData: FormData) {
   });
 
   revalidatePath(`/dashboard/engagements/${engagementId}/groupings`);
+  revalidatePath(`/dashboard/engagements/${engagementId}`);
 }

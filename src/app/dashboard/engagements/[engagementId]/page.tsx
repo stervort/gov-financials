@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic";
 import Link from "next/link";
 import { getEngagement } from "@/src/server/actions/engagements";
 import { getLatestImport, clearTB } from "@/src/server/actions/tb";
+import { getGroupingStats } from "@/src/server/actions/groupings";
 import { Card, CardContent, CardHeader, CardTitle } from "@/src/components/ui/card";
 import { Button } from "@/src/components/ui/button";
 
@@ -10,8 +11,10 @@ export default async function EngagementHome({ params }: { params: { engagementI
   const e = await getEngagement(params.engagementId);
   const latest = await getLatestImport(params.engagementId);
 
-  // ✅ Correct: after mapping+finalize we set status to "IMPORTED"
+  // after mapping+finalize we set status to "IMPORTED"
   const tbImported = !!latest && latest.status === "IMPORTED";
+
+  const groupingStats = tbImported ? await getGroupingStats(params.engagementId) : null;
 
   return (
     <div className="space-y-6">
@@ -72,7 +75,20 @@ export default async function EngagementHome({ params }: { params: { engagementI
           <CardHeader>
             <CardTitle>2) Account Groupings</CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-3">
+            {groupingStats ? (
+              <div className="text-sm">
+                <div>
+                  <span className="font-medium">Grouped:</span> {groupingStats.grouped.toLocaleString()}
+                </div>
+                <div className={groupingStats.ungrouped > 0 ? "text-red-700" : ""}>
+                  <span className="font-medium">Ungrouped:</span> {groupingStats.ungrouped.toLocaleString()}
+                </div>
+              </div>
+            ) : (
+              <div className="text-sm text-gray-500">Upload and import a TB to see grouping status.</div>
+            )}
+
             <Link href={`/dashboard/engagements/${e.id}/groupings`}>
               <Button variant="secondary" disabled={!tbImported}>
                 Open
