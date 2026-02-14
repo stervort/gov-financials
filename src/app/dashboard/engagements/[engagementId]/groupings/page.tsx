@@ -3,8 +3,12 @@ export const dynamic = "force-dynamic";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/src/components/ui/card";
 import { Button } from "@/src/components/ui/button";
-import { getEngagement } from "@/src/server/actions/engagements";
-import { listGroupingLines } from "@/src/server/actions/groupings";
+
+import {
+  listGroupingLines,
+  getLatestImportedTB,
+} from "@/src/server/actions/groupings";
+
 import GroupingsClient from "./groupings-client";
 
 export default async function GroupingsPage({
@@ -12,27 +16,69 @@ export default async function GroupingsPage({
   searchParams,
 }: {
   params: { engagementId: string };
-  searchParams?: Record<string, string | string[] | undefined>;
+  searchParams?: { page?: string; q?: string; ungrouped?: string };
 }) {
   const engagementId = params.engagementId;
-  const e = await getEngagement(engagementId);
 
-  const page = Number(searchParams?.page ?? 1) || 1;
-  const pageSize = Number(searchParams?.pageSize ?? 50) || 50;
-  const q = String(searchParams?.q ?? "");
-  const ungroupedOnly = String(searchParams?.ungroupedOnly ?? "") === "1";
+  // Determine if we even have an imported TB yet (industry behavior: block page until TB exists)
+  const latestTB = await getLatestImportedTB(engagementId);
 
-  const data = await listGroupingLines(engagementId, { page, pageSize, q, ungroupedOnly });
+  // Pagination + filters
+  const page = Math.max(parseInt(searchParams?.page ?? "1", 10) || 1, 1);
+  const q = (searchParams?.q ?? "").trim();
+  const ungroupedOnly =
+    (searchParams?.ungrouped ?? "").toLowerCase() === "1" ||
+    (searchParams?.ungrouped ?? "").toLowerCase() === "true";
+
+  // If no TB, show guidance and stop
+  if (!latestTB) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-semibold">Account Groupings</h1>
+          <Link href={`/dashboard/engagements/${engagementId}`}>
+            <Button variant="secondary">Back to engagement</Button>
+          </Link>
+        </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>No Trial Balance Imported</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="text-sm text-gray-600">
+              Upload and finalize a Trial Balance first. Groupings are based on the latest imported TB.
+            </div>
+            <Link href={`/dashboard/engagements/${engagementId}/tb`}>
+              <Button>Go to Trial Balance Import</Button>
+            </Link>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  // We have a TB, so load grouping lines
+  const data = await listGroupingLines(engagementId, {
+    page,
+    pageSize: 100, // you can tune this; pagination is now built-in
+    q,
+    ungroupedOnly,
+  });
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">Account Groupings</h1>
-          <div className="text-sm text-gray-500">{e.name}</div>
+          <div className="text-sm text-gray-500">
+            Latest TB import:{" "}
+            {new Date(latestTB.createdAt).toLocaleString()}
+          </div>
         </div>
+
         <Link href={`/dashboard/engagements/${engagementId}`}>
-          <Button variant="secondary">Back</Button>
+          <Button variant="secondary">Back to engagement</Button>
         </Link>
       </div>
 
@@ -40,24 +86,17 @@ export default async function GroupingsPage({
         <CardHeader>
           <CardTitle>Groupings</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
-          {!data.importId ? (
-            <div className="text-sm text-gray-600">
-              No imported trial balance found yet. Upload + finalize a TB first.
-            </div>
-          ) : (
-            <GroupingsClient
-              engagementId={engagementId}
-              importId={data.importId}
-              lines={data.lines}
-              fundsByCode={data.fundsByCode}
-              total={data.total}
-              page={data.page}
-              pageSize={data.pageSize}
-              q={q}
-              ungroupedOnly={ungroupedOnly}
-            />
-          )}
+        <CardContent>
+          <GroupingsClient
+            engagementId={engagementId}
+            fundsByCode={(data as any).fundsByCode ?? {}}
+            page={data.page}
+            pageSize={data.pageSize}
+            total={data.total}
+            lines={data.lines}
+            initialQ={q}
+            initialUngroupedOnly={ungroupedOnly}
+          />
         </CardContent>
       </Card>
     </div>
