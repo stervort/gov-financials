@@ -1,343 +1,331 @@
 "use client";
 
 import * as React from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/src/components/ui/card";
 import { Button } from "@/src/components/ui/button";
-import { Input } from "@/src/components/ui/input";
-import { Select } from "@/src/components/ui/select";
 
-type Props = {
-  engagementId: string;
-  importId: string;
-  suggestedHasHeaders: boolean;
-  matrix: any[][];
-  // Server action
-  finalizeAction: (formData: FormData) => Promise<void>;
+type PreviewRow = {
+  rowNumber: number; // 1-based original file row
+  cells: string[];
 };
 
-type FieldKey =
+export type FieldKey =
   | "accountCol"
   | "descriptionCol"
   | "finalBalanceCol"
   | "debitCol"
   | "creditCol"
   | "groupCol"
-  | "subgroupCol";
+  | "subgroupCol"
+  | "fundCol";
 
-const FIELD_OPTIONS: { key: FieldKey | ""; label: string }[] = [
+type FieldOption = { key: FieldKey | ""; label: string };
+
+const FIELD_OPTIONS: FieldOption[] = [
   { key: "", label: "(none)" },
   { key: "accountCol", label: "Account (required)" },
-  { key: "descriptionCol", label: "Description" },
-  { key: "finalBalanceCol", label: "Final Balance" },
-  { key: "debitCol", label: "Debit" },
-  { key: "creditCol", label: "Credit" },
-  { key: "groupCol", label: "Group" },
-  { key: "subgroupCol", label: "Subgroup" },
-  { key: "fundCol", label: "Fund (code or \"10 - Name\")" },
+  { key: "descriptionCol", label: "Description (optional)" },
+  { key: "finalBalanceCol", label: "Final Balance (use this OR Debit/Credit)" },
+  { key: "debitCol", label: "Debit (if no Final Balance)" },
+  { key: "creditCol", label: "Credit (if no Final Balance)" },
+  { key: "groupCol", label: "Group (optional)" },
+  { key: "subgroupCol", label: "Subgroup (optional)" },
+  { key: "fundCol", label: 'Fund (code or "10 - Name")' },
 ];
 
 function colLetter(i: number) {
-  // A, B, C...
+  // 0 -> A, 1 -> B, ...
   return String.fromCharCode("A".charCodeAt(0) + i);
 }
 
-function safeInt(v: any, fallback: number) {
-  const n = Number(v);
-  return Number.isFinite(n) ? Math.floor(n) : fallback;
+function normalizeFund(raw: string) {
+  // Accept:
+  // 10
+  // 10 - General Fund
+  // 10- General Fund
+  // 10–General Fund (en dash)
+  // Return: "10" (fund code)
+  const s = (raw ?? "").trim();
+  if (!s) return "";
+  const m = s.match(/^(\d{1,4})\s*(?:[-–—]\s*.*)?$/);
+  return m ? m[1] : s; // if not numeric prefix, store raw
 }
 
-function parseNumberLoose(v: any): number {
-  const raw = String(v ?? "").trim();
-  if (!raw) return 0;
-  const isParen = raw.startsWith("(") && raw.endsWith(")");
-  const s = raw.replace(/[()$,]/g, "").trim();
-  const n = Number(s.replace(/,/g, ""));
-  if (!Number.isFinite(n)) return 0;
-  return isParen ? -n : n;
-}
+type Props = {
+  engagementId: string;
+  importId: string;
+  fileName: string | null;
+  hasHeaders: boolean;
+  headerRowsToSkip: number;
+  preview: {
+    maxCols: number;
+    rows: PreviewRow[];
+  };
+  existingMapping?: Partial<Record<FieldKey, number>>; // 0-based column index
+  actionFinalize: (payload: {
+    engagementId: string;
+    importId: string;
+    mapping: Partial<Record<FieldKey, number>>;
+    hasHeaders: boolean;
+    headerRowsToSkip: number;
+  }) => Promise<{ ok: boolean; error?: string; redirectTo?: string }>;
+};
 
-export default function TBMapperClient({
-  engagementId,
-  importId,
-  suggestedHasHeaders,
-  matrix,
-  finalizeAction,
-}: Props) {
-  const maxCols = React.useMemo(() => {
-    let m = 0;
-    for (const r of matrix ?? []) m = Math.max(m, (r ?? []).length);
-    return m;
-  }, [matrix]);
-
-  const [hasHeaders, setHasHeaders] = React.useState<boolean>(!!suggestedHasHeaders);
+export default function TBMapperClient(props: Props) {
+  const [hasHeaders, setHasHeaders] = React.useState<boolean>(props.hasHeaders);
   const [headerRowsToSkip, setHeaderRowsToSkip] = React.useState<number>(
-    suggestedHasHeaders ? 1 : 0
+    props.headerRowsToSkip ?? 0
   );
 
-  // Which column is currently selected in the preview
-  const [activeCol, setActiveCol] = React.useState<number>(0);
+  const [mapping, setMapping] = React.useState<Partial<Record<FieldKey, number>>>(
+    props.existingMapping ?? {}
+  );
 
-  // Field -> column index (or null)
-  const [map, setMap] = React.useState<Record<FieldKey, number | null>>({
-    accountCol: 0,
-    descriptionCol: 1,
-    finalBalanceCol: null,
-    debitCol: null,
-    creditCol: null,
-    groupCol: null,
-    subgroupCol: null,
-  });
+  const [activeCol, setActiveCol] = React.useState<number | null>(null);
+  const [saving, setSaving] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
 
-  // If we have headers and row1 looks like headers, default to A=account, B=description, C=final
-  React.useEffect(() => {
-    // Keep account mapped to A by default
-    setMap((prev) => ({ ...prev, accountCol: prev.accountCol ?? 0 }));
-  }, []);
+  const rows = props.preview.rows ?? [];
+  const maxCols = props.preview.maxCols ?? 0;
 
-  const effectiveSkip = hasHeaders ? Math.max(0, headerRowsToSkip) : 0;
-  const previewRows = React.useMemo(() => {
-    const rows = (matrix ?? []).slice(0, 25);
-    return rows;
-  }, [matrix]);
+  const activeColCurrentField: FieldKey | "" = React.useMemo(() => {
+    if (activeCol == null) return "";
+    const hit = (Object.entries(mapping) as Array<[FieldKey, number]>).find(
+      ([, colIdx]) => colIdx === activeCol
+    );
+    return hit ? hit[0] : "";
+  }, [activeCol, mapping]);
 
-  const setFieldForActiveCol = (field: FieldKey | "") => {
-    setMap((prev) => {
+  function setActiveColToField(field: FieldKey | "") {
+    if (activeCol == null) return;
+
+    setMapping((prev) => {
       const next = { ...prev };
 
-      // Remove any existing mapping that points to activeCol
-      (Object.keys(next) as FieldKey[]).forEach((k) => {
-        if (next[k] === activeCol) next[k] = null;
-      });
+      // remove any field currently pointing at this column
+      for (const k of Object.keys(next) as FieldKey[]) {
+        if (next[k] === activeCol) delete next[k];
+      }
 
-      // If choosing none, we're done
-      if (!field) return next;
+      // if selecting a field, ensure it isn't already mapped elsewhere
+      if (field) {
+        // remove field from any other column
+        if (next[field] != null) delete next[field];
+        next[field] = activeCol;
+      }
 
-      // If mapping this field was previously mapped elsewhere, that's fine: move it
-      next[field] = activeCol;
       return next;
     });
-  };
+  }
 
-  const activeField = React.useMemo(() => {
-    const entries = Object.entries(map) as [FieldKey, number | null][];
-    const hit = entries.find(([, idx]) => idx === activeCol);
-    return hit?.[0] ?? "";
-  }, [map, activeCol]);
+  function isValid(mappingObj: Partial<Record<FieldKey, number>>) {
+    const hasAccount = mappingObj.accountCol != null;
+    const hasFinal = mappingObj.finalBalanceCol != null;
+    const hasDebit = mappingObj.debitCol != null;
+    const hasCredit = mappingObj.creditCol != null;
 
-  const usingFinal = map.finalBalanceCol != null;
-  const usingDrCr = map.debitCol != null && map.creditCol != null;
-  const canSubmit = map.accountCol != null && (usingFinal || usingDrCr);
+    if (!hasAccount) return { ok: false, msg: "You must map Account." };
 
-  // Validation helpers
-  const balanceInfo = React.useMemo(() => {
-    if (!canSubmit) return null;
+    // Must have either Final OR (Debit + Credit)
+    if (hasFinal) return { ok: true, msg: "" };
+    if (hasDebit && hasCredit) return { ok: true, msg: "" };
 
-    const accIdx = map.accountCol ?? 0;
-    const fbIdx = map.finalBalanceCol;
-    const drIdx = map.debitCol;
-    const crIdx = map.creditCol;
+    return { ok: false, msg: "Select Final Balance OR both Debit and Credit." };
+  }
 
-    const start = effectiveSkip;
-    const rows = (matrix ?? []).slice(start);
+  const validation = isValid(mapping);
 
-    let total = 0;
-    const accounts: string[] = [];
-    for (const r of rows) {
-      if (!r) continue;
-      if (r.every((c: any) => String(c ?? "").trim() === "")) continue;
-      const acct = String(r[accIdx] ?? "").trim();
-      if (!acct) continue;
-      accounts.push(acct);
+  async function onFinish() {
+    setError(null);
+    const v = isValid(mapping);
+    if (!v.ok) {
+      setError(v.msg);
+      return;
+    }
 
-      let fb = 0;
-      if (fbIdx != null) {
-        fb = parseNumberLoose(r[fbIdx]);
-      } else {
-        const d = drIdx != null ? Math.abs(parseNumberLoose(r[drIdx])) : 0;
-        const c = crIdx != null ? Math.abs(parseNumberLoose(r[crIdx])) : 0;
-        fb = d - c;
+    setSaving(true);
+    try {
+      const res = await props.actionFinalize({
+        engagementId: props.engagementId,
+        importId: props.importId,
+        mapping,
+        hasHeaders,
+        headerRowsToSkip,
+      });
+
+      if (!res.ok) {
+        setError(res.error ?? "Failed to finalize mapping.");
+        setSaving(false);
+        return;
       }
-      total += fb;
-    }
 
-    // Duplicates
-    const seen = new Set<string>();
-    let dupCount = 0;
-    for (const a of accounts) {
-      if (seen.has(a)) dupCount++;
-      seen.add(a);
+      // Redirect if provided; otherwise go back to engagement
+      const fallback = `/dashboard/engagements/${props.engagementId}`;
+      window.location.href = res.redirectTo ?? fallback;
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to finalize mapping.");
+    } finally {
+      setSaving(false);
     }
-
-    return { total, dupCount };
-  }, [canSubmit, map, matrix, effectiveSkip]);
+  }
 
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>1) Header Rows</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex flex-col gap-2 md:flex-row md:items-center md:gap-4">
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={hasHeaders}
-                onChange={(e) => setHasHeaders(e.target.checked)}
-              />
-              My file has header rows (skip them)
-            </label>
-            <div className="flex items-center gap-2 text-sm">
-              <span className="text-gray-600">Header rows to skip:</span>
-              <Input
-                type="number"
-                min={0}
-                className="w-24"
-                value={hasHeaders ? headerRowsToSkip : 0}
-                onChange={(e) => setHeaderRowsToSkip(safeInt(e.target.value, 0))}
-                disabled={!hasHeaders}
-              />
-              <span className="text-xs text-gray-500">
-                ({hasHeaders ? headerRowsToSkip : 0} means data starts on row {effectiveSkip + 1})
-              </span>
+    <div className="space-y-4">
+      {/* Header rows */}
+      <div className="rounded-md border p-4 space-y-3">
+        <div className="font-medium">Header Rows</div>
+
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={hasHeaders}
+            onChange={(e) => setHasHeaders(e.target.checked)}
+          />
+          My file has header rows (skip them)
+        </label>
+
+        <div className="flex items-center gap-3 text-sm">
+          <div className={hasHeaders ? "" : "text-gray-400"}>TB data starts on row:</div>
+          <input
+            type="number"
+            min={1}
+            className="h-9 w-24 rounded-md border px-2"
+            disabled={!hasHeaders}
+            value={hasHeaders ? headerRowsToSkip + 1 : 1}
+            onChange={(e) => {
+              const startRow = Math.max(1, Number(e.target.value || 1));
+              setHeaderRowsToSkip(Math.max(0, startRow - 1));
+            }}
+          />
+          <div className="text-gray-500">(row number in the file)</div>
+        </div>
+      </div>
+
+      {/* Mapping instructions */}
+      <div className="rounded-md border p-4 space-y-2">
+        <div className="font-medium">Column Mapping</div>
+        <div className="text-sm text-gray-600">
+          Click a column header (A, B, C...) then choose what that column represents.
+        </div>
+
+        {activeCol != null ? (
+          <div className="flex items-center gap-3 text-sm">
+            <div className="font-medium">
+              Selected Column: {colLetter(activeCol)}
             </div>
+
+            <select
+              className="h-9 rounded-md border px-2"
+              value={activeColCurrentField}
+              onChange={(e) => setActiveColToField(e.target.value as FieldKey | "")}
+            >
+              {FIELD_OPTIONS.map((o) => (
+                <option key={o.label} value={o.key}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
           </div>
-          <p className="text-xs text-gray-500">
-            We remove fully blank rows automatically. Everything after the skipped header rows will be imported.
-          </p>
-        </CardContent>
-      </Card>
+        ) : (
+          <div className="text-sm text-gray-500">Select a column header to map it.</div>
+        )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>2) Column Mapping</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="rounded-md border p-3 space-y-2">
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="text-sm">
-                <span className="text-gray-600">Selected column:</span>{" "}
-                <span className="font-mono font-medium">{colLetter(activeCol)}</span>
-              </div>
+        <div className="text-xs text-gray-500 pt-1">
+          Rule: You must select <b>Account</b>, and either <b>Final Balance</b> OR both{" "}
+          <b>Debit</b> + <b>Credit</b>.
+        </div>
 
-              <div className="w-full md:w-80">
-                <Select
-                  value={activeField}
-                  onChange={(e) => setFieldForActiveCol(e.target.value as any)}
-                >
-                  {FIELD_OPTIONS.map((o) => (
-                    <option key={o.label} value={o.key}>
-                      {o.label}
-                    </option>
-                  ))}
-                </Select>
-              </div>
+        {!validation.ok && (
+          <div className="text-sm text-red-600">{validation.msg}</div>
+        )}
+        {error && <div className="text-sm text-red-600">{error}</div>}
 
-              <div className="flex-1" />
+        <div className="flex items-center gap-2 pt-2">
+          <Button onClick={onFinish} disabled={saving || !validation.ok}>
+            {saving ? "Finishing..." : "Finish Import"}
+          </Button>
 
-              <form action={finalizeAction}>
-                <input type="hidden" name="engagementId" value={engagementId} />
-                <input type="hidden" name="importId" value={importId} />
-                <input type="hidden" name="hasHeaders" value={String(hasHeaders)} />
-                <input type="hidden" name="headerRowsToSkip" value={String(effectiveSkip)} />
+          <Button
+            variant="secondary"
+            onClick={() => (window.location.href = `/dashboard/engagements/${props.engagementId}`)}
+            disabled={saving}
+          >
+            Cancel
+          </Button>
+        </div>
+      </div>
 
-                {(Object.keys(map) as FieldKey[]).map((k) => (
-                  <input
-                    key={k}
-                    type="hidden"
-                    name={k}
-                    value={map[k] == null ? "" : String(map[k])}
-                  />
-                ))}
+      {/* Preview table */}
+      <div className="rounded-md border overflow-hidden">
+        <div className="p-3 text-sm text-gray-600 border-b">
+          Preview ({rows.length} rows shown)
+        </div>
 
-                <Button type="submit" disabled={!canSubmit}>
-                  Finish Import
-                </Button>
-              </form>
-            </div>
+        <div className="overflow-auto">
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50 sticky top-0 z-10">
+              <tr>
+                <th className="text-left px-3 py-2 border-b w-20">Row</th>
+                {Array.from({ length: maxCols }).map((_, idx) => {
+                  const mappedField = (Object.entries(mapping) as Array<[FieldKey, number]>).find(
+                    ([, colIdx]) => colIdx === idx
+                  )?.[0];
 
-            <div className="text-xs text-gray-500">
-              Rule: you must map <b>Account</b>, and either <b>Final Balance</b> OR both <b>Debit</b> + <b>Credit</b>.
-            </div>
-
-            {balanceInfo ? (
-              <div className="text-xs">
-                <span className="text-gray-600">TB total:</span>{" "}
-                <span className={Math.abs(balanceInfo.total) < 0.005 ? "text-green-700 font-medium" : "text-red-700 font-medium"}>
-                  {balanceInfo.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </span>
-                {balanceInfo.dupCount > 0 ? (
-                  <span className="ml-3 text-amber-700">
-                    Duplicates detected: {balanceInfo.dupCount} (we recommend fixing before import)
-                  </span>
-                ) : null}
-              </div>
-            ) : (
-              <div className="text-xs text-gray-500">Select required mappings to see TB total / duplicates.</div>
-            )}
-          </div>
-
-          <div className="overflow-auto border rounded-md">
-            <table className="min-w-full text-sm">
-              <thead className="bg-gray-50">
-                <tr className="text-left">
-                  <th className="px-3 py-2 w-16">Row</th>
-                  {Array.from({ length: maxCols }).map((_, i) => {
-                    const labelField = (Object.entries(map) as [FieldKey, number | null][]).find(([, idx]) => idx === i)?.[0];
-                    const pretty = labelField
-                      ? FIELD_OPTIONS.find((o) => o.key === labelField)?.label ?? ""
-                      : "";
-                    const isActive = i === activeCol;
-                    return (
-                      <th
-                        key={i}
-                        className={
-                          "px-3 py-2 cursor-pointer select-none " +
-                          (isActive ? "bg-gray-100" : "")
-                        }
-                        title="Click to map this column"
-                        onClick={() => setActiveCol(i)}
-                      >
-                        <div className="flex items-baseline gap-2">
-                          <span className="font-mono">{colLetter(i)}</span>
-                          {pretty ? <span className="text-xs text-gray-600">• {pretty}</span> : null}
-                        </div>
-                      </th>
-                    );
-                  })}
-                </tr>
-              </thead>
-              <tbody>
-                {previewRows.map((r, rowIdx) => {
-                  const isHeaderRow = rowIdx < effectiveSkip;
-                  const isBlank = (r ?? []).every((c: any) => String(c ?? "").trim() === "");
-                  const rowClass =
-                    isBlank
-                      ? "text-gray-300"
-                      : isHeaderRow
-                        ? "bg-gray-50 text-gray-500"
-                        : "bg-green-50/40";
+                  const isSelected = activeCol === idx;
 
                   return (
-                    <tr key={rowIdx} className={"border-t " + rowClass}>
-                      <td className="px-3 py-2 text-xs text-gray-500">{rowIdx + 1}</td>
-                      {Array.from({ length: maxCols }).map((_, colIdx) => (
-                        <td key={colIdx} className="px-3 py-2 whitespace-nowrap">
-                          {String((r ?? [])[colIdx] ?? "")}
-                        </td>
-                      ))}
-                    </tr>
+                    <th
+                      key={idx}
+                      className={[
+                        "text-left px-3 py-2 border-b cursor-pointer whitespace-nowrap",
+                        isSelected ? "bg-white" : "",
+                      ].join(" ")}
+                      onClick={() => setActiveCol(idx)}
+                      title="Click to map this column"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{colLetter(idx)}</span>
+                        {mappedField ? (
+                          <span className="text-xs text-gray-600">
+                            • {FIELD_OPTIONS.find((o) => o.key === mappedField)?.label ?? mappedField}
+                          </span>
+                        ) : null}
+                      </div>
+                    </th>
                   );
                 })}
-              </tbody>
-            </table>
-          </div>
+              </tr>
+            </thead>
 
-          <p className="text-xs text-gray-500">
-            Tip: click a column header (A, B, C...) to select it, then choose what it represents in the dropdown above.
-          </p>
-        </CardContent>
-      </Card>
+            <tbody>
+              {rows.map((r) => {
+                const shouldSkip =
+                  hasHeaders && r.rowNumber <= headerRowsToSkip ? true : false;
+
+                return (
+                  <tr
+                    key={r.rowNumber}
+                    className={shouldSkip ? "bg-gray-100 text-gray-500" : ""}
+                  >
+                    <td className="px-3 py-2 border-b">{r.rowNumber}</td>
+                    {Array.from({ length: maxCols }).map((_, idx) => (
+                      <td key={idx} className="px-3 py-2 border-b whitespace-nowrap">
+                        {r.cells[idx] ?? ""}
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Tiny UX hint */}
+      <div className="text-xs text-gray-500">
+        Tip: If your file includes a fund column like <code>10 - General Fund</code>, map it to{" "}
+        <b>Fund</b>. We’ll store the fund code (e.g., <code>10</code>) and keep the display name
+        later from Fund Setup.
+      </div>
     </div>
   );
 }
