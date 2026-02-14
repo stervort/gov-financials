@@ -3,6 +3,7 @@
 import { db } from "@/src/lib/db";
 import { ensureDefaultOrg } from "@/src/server/security/tenant";
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 
 async function assertEngagement(orgId: string, engagementId: string) {
   return db.engagement.findFirstOrThrow({
@@ -27,15 +28,12 @@ export async function getGroupingStats(engagementId: string) {
   }
 
   const total = await db.trialBalanceLine.count({ where: { importId: latest.id } });
-  const ungrouped = await db.trialBalanceLine.count({
-    where: {
-      importId: latest.id,
-      OR: [{ auditGroup: null }, { auditGroup: "" }],
-    },
-  });
-  const grouped = total - ungrouped;
 
-  return { importId: latest.id, grouped, ungrouped, total };
+  const ungrouped = await db.trialBalanceLine.count({
+    where: { importId: latest.id, OR: [{ auditGroup: null }, { auditGroup: "" }] },
+  });
+
+  return { importId: latest.id, grouped: total - ungrouped, ungrouped, total };
 }
 
 export async function listGroupingLines(engagementId: string) {
@@ -43,38 +41,71 @@ export async function listGroupingLines(engagementId: string) {
   await assertEngagement(org.id, engagementId);
 
   const latest = await getLatestImportedTB(engagementId);
-  if (!latest) return { importId: null as string | null, lines: [] as any[] };
+  if (!latest) return { importId: null as string | null, lines: [] as any[], totalLines: 0 };
 
-  // NOTE: we keep this capped for now so the page stays fast.
-  // If you hit the limit on a real client, we'll add paging + server-side filtering.
-  const lines = await db.trialBalanceLine.findMany({
-    where: { importId: latest.id },
-    orderBy: { account: "asc" },
-    take: 2000,
-  });
+  // Quick fix: bump cap to 10,000
+  const TAKE = 10000;
 
-  return { importId: latest.id, lines };
+  const [totalLines, lines] = await Promise.all([
+    db.trialBalanceLine.count({ where: { importId: latest.id } }),
+    db.trialBalanceLine.findMany({
+      where: { importId: latest.id },
+      orderBy: { account: "asc" },
+      take: TAKE,
+    }),
+  ]);
+
+  return { importId: latest.id, lines, totalLines };
 }
 
-export async function updateLineGrouping(formData: FormData) {
+const BulkEdit = z.object({
+  engagementId: z.string().min(1),
+  editsJson: z.string().min(2),
+});
+
+const EditItem = z.object({
+  lineId: z.string().min(1),
+  auditGroup: z.string().optional().nullable(),
+  auditSubgroup: z.string().optional().nullable(),
+});
+
+export async function bulkUpdateGroupings(formData: FormData) {
   const org = await ensureDefaultOrg();
-  const engagementId = String(formData.get("engagementId") ?? "");
-  const lineId = String(formData.get("lineId") ?? "");
-  if (!engagementId || !lineId) return;
 
-  await assertEngagement(org.id, engagementId);
-
-  const auditGroup = String(formData.get("auditGroup") ?? "").trim();
-  const auditSubgroup = String(formData.get("auditSubgroup") ?? "").trim();
-
-  await db.trialBalanceLine.update({
-    where: { id: lineId },
-    data: {
-      auditGroup: auditGroup || null,
-      auditSubgroup: auditSubgroup || null,
-    },
+  const v = BulkEdit.parse({
+    engagementId: String(formData.get("engagementId") ?? ""),
+    editsJson: String(formData.get("editsJson") ?? ""),
   });
 
-  revalidatePath(`/dashboard/engagements/${engagementId}/groupings`);
-  revalidatePath(`/dashboard/engagements/${engagementId}`);
+  await assertEngagement(org.id, v.engagementId);
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(v.editsJson);
+  } catch {
+    throw new Error("Could not parse edits JSON.");
+  }
+
+  const edits = z.array(EditItem).parse(parsed);
+
+  // nothing to do
+  if (edits.length === 0) return;
+
+  await db.$transaction(async (tx) => {
+    for (const e of edits) {
+      const auditGroup = (e.auditGroup ?? "").trim();
+      const auditSubgroup = (e.auditSubgroup ?? "").trim();
+
+      await tx.trialBalanceLine.update({
+        where: { id: e.lineId },
+        data: {
+          auditGroup: auditGroup || null,
+          auditSubgroup: auditSubgroup || null,
+        },
+      });
+    }
+  });
+
+  revalidatePath(`/dashboard/engagements/${v.engagementId}/groupings`);
+  revalidatePath(`/dashboard/engagements/${v.engagementId}`);
 }
