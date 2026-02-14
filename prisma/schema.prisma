@@ -46,12 +46,11 @@ model TrialBalanceImport {
   rowCount     Int      @default(0)
   totalBalance Decimal  @default(0) @db.Decimal(18,2)
 
-  // supports CSV/XLSX and manual mapping
-  fileType         String?
-  hasHeaders       Boolean @default(false) // user-confirmed on mapping screen
-  headerRowsToSkip Int     @default(0)
-  rawMatrix        Json?
-  columnMap        Json?
+  // NEW: supports CSV/XLSX and headerless/manual mapping
+  fileType   String?
+  hasHeaders Boolean @default(true)
+  rawMatrix  Json?
+  columnMap  Json?
 
   engagement Engagement        @relation(fields: [engagementId], references: [id])
   lines      TrialBalanceLine[]

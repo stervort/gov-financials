@@ -2,90 +2,101 @@ export const dynamic = "force-dynamic";
 
 import Link from "next/link";
 import { getEngagement } from "@/src/server/actions/engagements";
-import { getLatestImport } from "@/src/server/actions/tb";
+import { getLatestImport, clearTB } from "@/src/server/actions/tb";
 import { Card, CardContent, CardHeader, CardTitle } from "@/src/components/ui/card";
 import { Button } from "@/src/components/ui/button";
 
-export default async function EngagementPage({ params }: { params: { engagementId: string } }) {
-  const engagement = await getEngagement(params.engagementId);
+export default async function EngagementHome({ params }: { params: { engagementId: string } }) {
+  const e = await getEngagement(params.engagementId);
   const latest = await getLatestImport(params.engagementId);
 
-  const tbReady = Boolean(latest && latest.status === "IMPORTED");
+  const tbMapped = !!latest && latest.status === "MAPPED";
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold">{engagement.name}</h1>
+        <h1 className="text-2xl font-semibold">{e.name}</h1>
         <div className="text-sm text-gray-500">
-          FYE: {new Date(engagement.fiscalYearEnd).toLocaleDateString()}
+          FYE: {new Date(e.fiscalYearEnd).toLocaleDateString()}
         </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
           <CardHeader>
-            <CardTitle>1) Trial Balance</CardTitle>
+            <CardTitle>1) Import TB</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <p className="text-sm text-gray-600">
-              Upload and map your TB columns (Account, Balance or Debit/Credit, optional Group/Subgroup).
-            </p>
-            <div className="text-sm">
-              Status:{" "}
+            <div className="flex gap-2">
+              <Link href={`/dashboard/engagements/${e.id}/tb`}>
+                <Button>Upload</Button>
+              </Link>
+
+              {latest && latest.status === "NEEDS_MAPPING" ? (
+                <Link href={`/dashboard/engagements/${e.id}/tb/map/${latest.id}`}>
+                  <Button variant="secondary">Map</Button>
+                </Link>
+              ) : null}
+
               {latest ? (
-                <span className="font-mono">{latest.status}</span>
-              ) : (
-                <span className="text-gray-500">No upload</span>
-              )}
+                <form action={clearTB}>
+                  <input type="hidden" name="engagementId" value={e.id} />
+                  <Button type="submit" variant="secondary">
+                    Clear TB
+                  </Button>
+                </form>
+              ) : null}
             </div>
-            <Link href={`/dashboard/engagements/${params.engagementId}/tb`}>
-              <Button>Upload / Map</Button>
-            </Link>
+
+            {latest ? (
+              <div className="text-xs text-gray-500">
+                Latest: {latest.filename} 
+                <span className={tbMapped ? "text-green-700" : "text-amber-700"}>
+                  {tbMapped ? " (mapped)" : " (needs mapping)"}
+                </span>
+              </div>
+            ) : (
+              <div className="text-xs text-gray-500">No TB yet</div>
+            )}
+
+            {!tbMapped ? (
+              <div className="text-xs text-amber-700">
+                Next steps are locked until the latest Trial Balance is mapped.
+              </div>
+            ) : null}
           </CardContent>
         </Card>
 
-        <Card className={!tbReady ? "opacity-60" : ""}>
+        <Card>
           <CardHeader>
-            <CardTitle>2) Account Groupings</CardTitle>
+            <CardTitle>2) Fund Rules</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
-            <p className="text-sm text-gray-600">
-              Review Group/Subgroup columns and fill in missing groupings for new accounts.
-            </p>
-            <Link href={`/dashboard/engagements/${params.engagementId}/groupings`}>
-              <Button disabled={!tbReady} variant={tbReady ? "default" : "secondary"}>
-                {tbReady ? "Open" : "Upload TB first"}
+          <CardContent>
+            <Link href={`/dashboard/engagements/${e.id}/fund-rules`}>
+              <Button variant="secondary" disabled={!tbMapped}>
+                Edit
               </Button>
             </Link>
           </CardContent>
         </Card>
 
-        <Card className={!tbReady ? "opacity-60" : ""}>
+        <Card>
           <CardHeader>
-            <CardTitle>3) Fund Setup</CardTitle>
+            <CardTitle>3) Funds</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
-            <p className="text-sm text-gray-600">
-              Confirm fund codes, names, types, and major funds. (Auto-detected from account number rules.)
-            </p>
-            <Link href={`/dashboard/engagements/${params.engagementId}/funds`}>
-              <Button disabled={!tbReady} variant={tbReady ? "default" : "secondary"}>
-                {tbReady ? "Open" : "Upload TB first"}
+          <CardContent>
+            <Link href={`/dashboard/engagements/${e.id}/funds`}>
+              <Button variant="secondary" disabled={!tbMapped}>
+                Manage
               </Button>
             </Link>
           </CardContent>
         </Card>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Next Steps</CardTitle>
-        </CardHeader>
-        <CardContent className="text-sm text-gray-600 space-y-2">
-          <div>• After Fund Setup, we'll generate fund statements, GWFS conversion, and exports (Excel + DOCX) in later slices.</div>
-          <div>• If a new TB is uploaded, it creates a new import; you can clear old imports if you want a clean reset.</div>
-        </CardContent>
-      </Card>
+      <Link href="/dashboard">
+        <Button variant="secondary">Back</Button>
+      </Link>
     </div>
   );
 }
