@@ -1,60 +1,65 @@
 export const dynamic = "force-dynamic";
 
 import Link from "next/link";
-import { listGroupingLines, bulkUpdateGroupings } from "@/src/server/actions/groupings";
 import { Card, CardContent, CardHeader, CardTitle } from "@/src/components/ui/card";
 import { Button } from "@/src/components/ui/button";
+import { getEngagement } from "@/src/server/actions/engagements";
+import { listGroupingLines } from "@/src/server/actions/groupings";
 import GroupingsClient from "./groupings-client";
 
-export default async function GroupingsPage({ params }: { params: { engagementId: string } }) {
-  const { importId, lines, totalLines } = await listGroupingLines(params.engagementId);
+export default async function GroupingsPage({
+  params,
+  searchParams,
+}: {
+  params: { engagementId: string };
+  searchParams?: Record<string, string | string[] | undefined>;
+}) {
+  const engagementId = params.engagementId;
+  const e = await getEngagement(engagementId);
+
+  const page = Number(searchParams?.page ?? 1) || 1;
+  const pageSize = Number(searchParams?.pageSize ?? 50) || 50;
+  const q = String(searchParams?.q ?? "");
+  const ungroupedOnly = String(searchParams?.ungroupedOnly ?? "") === "1";
+
+  const data = await listGroupingLines(engagementId, { page, pageSize, q, ungroupedOnly });
 
   return (
-    <div className="space-y-6 max-w-7xl">
-      <div className="flex items-center justify-between">
+    <div className="space-y-6">
+      <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Account Groupings</h1>
-          <p className="text-sm text-gray-500">
-            Locked by default. Click Edit to stage changes, then Save (or Cancel).
-          </p>
+          <div className="text-sm text-gray-500">{e.name}</div>
         </div>
-        <Link href={`/dashboard/engagements/${params.engagementId}`}>
+        <Link href={`/dashboard/engagements/${engagementId}`}>
           <Button variant="secondary">Back</Button>
         </Link>
       </div>
 
-      {!importId ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>No imported trial balance yet</CardTitle>
-          </CardHeader>
-          <CardContent className="text-sm text-gray-600">
-            Upload + map a trial balance first.
-            <div className="mt-3">
-              <Link href={`/dashboard/engagements/${params.engagementId}/tb`}>
-                <Button>Go to TB Upload</Button>
-              </Link>
+      <Card>
+        <CardHeader>
+          <CardTitle>Groupings</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {!data.importId ? (
+            <div className="text-sm text-gray-600">
+              No imported trial balance found yet. Upload + finalize a TB first.
             </div>
-          </CardContent>
-        </Card>
-      ) : (
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle>Lines</CardTitle>
-            <div className="text-xs text-gray-500">
-              Loaded {lines.length.toLocaleString()} of {totalLines.toLocaleString()}
-            </div>
-          </CardHeader>
-          <CardContent>
+          ) : (
             <GroupingsClient
-              engagementId={params.engagementId}
-              lines={lines}
-              totalLines={totalLines}
-              bulkUpdateGroupings={bulkUpdateGroupings}
+              engagementId={engagementId}
+              importId={data.importId}
+              lines={data.lines}
+              fundsByCode={data.fundsByCode}
+              total={data.total}
+              page={data.page}
+              pageSize={data.pageSize}
+              q={q}
+              ungroupedOnly={ungroupedOnly}
             />
-          </CardContent>
-        </Card>
-      )}
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
