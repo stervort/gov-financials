@@ -1,13 +1,13 @@
 export const dynamic = "force-dynamic";
 
 import Link from "next/link";
-import { listGroupingLines, updateLineGrouping } from "@/src/server/actions/groupings";
+import { listGroupingLines, bulkUpdateGroupings } from "@/src/server/actions/groupings";
 import { Card, CardContent, CardHeader, CardTitle } from "@/src/components/ui/card";
 import { Button } from "@/src/components/ui/button";
 import GroupingsClient from "./groupings-client";
 
 export default async function GroupingsPage({ params }: { params: { engagementId: string } }) {
-  const { importId, lines } = await listGroupingLines(params.engagementId);
+  const { importId, lines, totalLines } = await listGroupingLines(params.engagementId);
 
   return (
     <div className="space-y-6 max-w-7xl">
@@ -15,7 +15,7 @@ export default async function GroupingsPage({ params }: { params: { engagementId
         <div>
           <h1 className="text-2xl font-semibold">Account Groupings</h1>
           <p className="text-sm text-gray-500">
-            Review and complete Group/Subgroup assignments. Ungrouped accounts are highlighted in red.
+            Locked by default. Click Edit to stage changes, then Save (or Cancel).
           </p>
         </div>
         <Link href={`/dashboard/engagements/${params.engagementId}`}>
@@ -39,19 +39,19 @@ export default async function GroupingsPage({ params }: { params: { engagementId
         </Card>
       ) : (
         <Card>
-          <CardHeader>
-            <CardTitle>Lines (up to 2,000)</CardTitle>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle>Lines</CardTitle>
+            <div className="text-xs text-gray-500">
+              Loaded {lines.length.toLocaleString()} of {totalLines.toLocaleString()}
+            </div>
           </CardHeader>
           <CardContent>
             <GroupingsClient
               engagementId={params.engagementId}
               lines={lines}
-              updateLineGrouping={updateLineGrouping}
+              totalLines={totalLines}
+              bulkUpdateGroupings={bulkUpdateGroupings}
             />
-            <p className="text-xs text-gray-500 mt-3">
-              Tip: Use the filters under each column heading to quickly find accounts. We’ll add paging if you run into
-              the 2,000 line cap.
-            </p>
           </CardContent>
         </Card>
       )}
