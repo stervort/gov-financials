@@ -6,8 +6,8 @@ import { getImportForMapping, finalizeTBMapping } from "@/src/server/actions/tb"
 type Params = { engagementId: string; importId: string };
 
 export default async function TBMapPage({ params }: { params: Params }) {
-  // Use `any` so we don't get blocked by mismatched server-action return typing.
-  const data: any = await getImportForMapping(params.engagementId, params.importId);
+  // ✅ Your action expects 1 arg (importId)
+  const data: any = await getImportForMapping(params.importId);
 
   // Support either shape:
   // - data.matrix (array of rows)
