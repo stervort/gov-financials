@@ -235,11 +235,45 @@ export async function getLatestImport(engagementId: string) {
 /**
  * ✅ Needed by /tb page for preview
  */
-export async function getImportPreview(importId: string) {
-  return db.trialBalanceImport.findFirstOrThrow({
-    where: { id: importId },
-    include: { lines: { take: 50, orderBy: { account: "asc" } } },
+export async function getImportPreview(
+  engagementId: string,
+  opts?: {
+    page?: number;
+    pageSize?: number;
+    accountSearch?: string;
+    descSearch?: string;
+    groupSearch?: string;
+    subgroupSearch?: string;
+    fundSearch?: string;
+  }
+) {
+  const org = await ensureDefaultOrg();
+  await db.engagement.findFirstOrThrow({ where: { id: engagementId, organizationId: org.id } });
+
+  const imp = await db.trialBalanceImport.findFirst({
+    where: { engagementId, status: "IMPORTED" },
+    orderBy: { createdAt: "desc" },
   });
+
+  if (!imp) return { import: null as any, lines: [] as any[], total: 0, page: 1, pageSize: 50 };
+
+  const pageSize = Math.min(Math.max(opts?.pageSize ?? 50, 25), 500);
+  const page = Math.max(opts?.page ?? 1, 1);
+  const skip = (page - 1) * pageSize;
+
+  const where: any = { importId: imp.id };
+  if (opts?.accountSearch) where.account = { contains: opts.accountSearch, mode: "insensitive" };
+  if (opts?.descSearch) where.description = { contains: opts.descSearch, mode: "insensitive" };
+  if (opts?.groupSearch) where.group = { contains: opts.groupSearch, mode: "insensitive" };
+  if (opts?.subgroupSearch) where.subgroup = { contains: opts.subgroupSearch, mode: "insensitive" };
+  if (opts?.fundSearch) where.fundCode = { contains: opts.fundSearch, mode: "insensitive" };
+
+  const [total, lines] = await Promise.all([
+    db.trialBalanceLine.count({ where }),
+    db.trialBalanceLine.findMany({ where, orderBy: { account: "asc" }, skip, take: pageSize }),
+  ]);
+
+  return { import: imp, lines, total, page, pageSize };
 }
 
 /**

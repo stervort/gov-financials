@@ -33,6 +33,7 @@ const FIELD_OPTIONS: { key: FieldKey | ""; label: string }[] = [
   { key: "creditCol", label: "Credit" },
   { key: "groupCol", label: "Group" },
   { key: "subgroupCol", label: "Subgroup" },
+  { key: "fundCol", label: "Fund (code or \"10 - Name\")" },
 ];
 
 function colLetter(i: number) {

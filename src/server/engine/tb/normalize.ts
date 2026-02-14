@@ -33,6 +33,7 @@ export type TBColumnMap = {
   creditCol?: number | null;
   groupCol?: number | null;
   subgroupCol?: number | null;
+  fundCol?: number | null; // optional fund code/name column
 };
 
 export function parseCSVToMatrix(text: string): any[][] {
@@ -209,3 +210,16 @@ export function buildRowsFromMatrixWithMap(matrix: any[][], map: TBColumnMap): T
 
   return out;
 }
+export function normalizeFundCode(raw: unknown): string | null {
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  // Accept formats like "10", "010", "10 - General Fund", "10-General Fund", "Fund 10", etc.
+  const m = s.match(/^(\d{1,4})/);
+  if (m) return m[1].padStart(2, "0").slice(-2); // default to 2-digit fund codes for gov
+  const m2 = s.match(/(\d{1,4})/);
+  if (m2) return m2[1].padStart(2, "0").slice(-2);
+  return null;
+}
+
+

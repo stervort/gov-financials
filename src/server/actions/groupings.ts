@@ -39,89 +39,64 @@ export async function getGroupingCounts(engagementId: string) {
   return { total, grouped, ungrouped };
 }
 
-export async function listGroupingLines(
-  engagementId: string,
-  opts?: {
-    page?: number;
-    pageSize?: number;
-    q?: string;
-    ungroupedOnly?: boolean;
-  }
-) {
+export async function listGroupingLines(engagementId: string, opts?: { page?: number; pageSize?: number; q?: string; ungroupedOnly?: boolean }) {
   const org = await ensureDefaultOrg();
-  await assertEngagement(org.id, engagementId);
+  await db.engagement.findFirstOrThrow({ where: { id: engagementId, organizationId: org.id } });
 
-  const latest = await getLatestImportedTB(engagementId);
-  if (!latest) {
-    return {
-      importId: null as string | null,
-      total: 0,
-      page: 1,
-      pageSize: 50,
-      lines: [] as any[],
-      fundsByCode: {} as Record<string, { fundCode: string; name: string | null }>,
-    };
-  }
+  const page = Math.max(opts?.page ?? 1, 1);
+  const pageSize = Math.min(Math.max(opts?.pageSize ?? 200, 25), 500);
+  const skip = (page - 1) * pageSize;
 
-  const page = Math.max(1, Math.floor(opts?.page ?? 1));
-  const pageSize = Math.min(500, Math.max(25, Math.floor(opts?.pageSize ?? 50)));
-  const q = (opts?.q ?? "").trim();
-  const ungroupedOnly = !!opts?.ungroupedOnly;
-
-  const where: any = { importId: latest.id };
-
-  if (ungroupedOnly) {
-    where.AND = [
-      {
-        AND: [
-          { OR: [{ auditGroup: null }, { auditGroup: "" }] },
-          { OR: [{ auditSubgroup: null }, { auditSubgroup: "" }] },
-        ],
-      },
-    ];
-  }
-
-  if (q) {
-    where.AND = [
-      ...(where.AND ?? []),
-      {
-        OR: [
-          { account: { contains: q, mode: "insensitive" } },
-          { description: { contains: q, mode: "insensitive" } },
-          { auditGroup: { contains: q, mode: "insensitive" } },
-          { auditSubgroup: { contains: q, mode: "insensitive" } },
-          { fundCode: { contains: q, mode: "insensitive" } },
-        ],
-      },
-    ];
-  }
-
-  const total = await db.trialBalanceLine.count({ where });
-
-  const lines = await db.trialBalanceLine.findMany({
-    where,
-    orderBy: { account: "asc" },
-    skip: (page - 1) * pageSize,
-    take: pageSize,
+  const imp = await db.trialBalanceImport.findFirst({
+    where: { engagementId, status: "IMPORTED" },
+    orderBy: { createdAt: "desc" },
   });
 
-  const funds = await db.fund.findMany({
-    where: { engagementId },
-    select: { fundCode: true, name: true },
-  });
-  const fundsByCode: Record<string, { fundCode: string; name: string | null }> = {};
-  for (const f of funds) fundsByCode[f.fundCode] = f;
+  if (!imp) return { page, pageSize, total: 0, lines: [] as any[] };
 
-  return {
-    importId: latest.id,
-    total,
-    page,
-    pageSize,
-    lines,
-    fundsByCode,
-  };
+  const where: any = { importId: imp.id };
+  if (opts?.q) {
+    where.OR = [
+      { account: { contains: opts.q, mode: "insensitive" } },
+      { description: { contains: opts.q, mode: "insensitive" } },
+      { group: { contains: opts.q, mode: "insensitive" } },
+      { subgroup: { contains: opts.q, mode: "insensitive" } },
+      { fundCode: { contains: opts.q, mode: "insensitive" } },
+    ];
+  }
+  if (opts?.ungroupedOnly) {
+    where.OR = where.OR ?? [];
+    where.OR.push({ group: null }, { group: "" }, { subgroup: null }, { subgroup: "" });
+  }
+
+  const [funds, total, lines] = await Promise.all([
+    db.fund.findMany({ where: { engagementId }, select: { fundCode: true, name: true } }),
+    db.trialBalanceLine.count({ where }),
+    db.trialBalanceLine.findMany({
+      where,
+      orderBy: [{ account: "asc" }],
+      skip,
+      take: pageSize,
+      select: {
+        id: true,
+        account: true,
+        description: true,
+        group: true,
+        subgroup: true,
+        amount: true,
+        fundCode: true,
+      },
+    }),
+  ]);
+
+  const fundMap = new Map(funds.map(f => [f.fundCode, f.name]));
+  const decorated = lines.map(l => ({
+    ...l,
+    fundLabel: l.fundCode ? `${l.fundCode}${fundMap.get(l.fundCode) ? ` - ${fundMap.get(l.fundCode)}` : ""}` : "",
+  }));
+
+  return { page, pageSize, total, lines: decorated };
 }
-
 const BulkUpdate = z.object({
   engagementId: z.string().min(1),
   updates: z.array(
