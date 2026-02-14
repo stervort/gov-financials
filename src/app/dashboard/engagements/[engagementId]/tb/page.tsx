@@ -78,7 +78,13 @@ export default async function TBPage({
           {hasImport && (
             <form action={clearTB}>
               <input type="hidden" name="engagementId" value={params.engagementId} />
-              <Button type="submit" variant="destructive">Clear current imported TB</Button>
+              <Button
+                type="submit"
+                variant="ghost"
+                className="text-red-600 hover:text-red-700 hover:bg-red-50"
+              >
+                Clear current imported TB
+              </Button>
             </form>
           )}
         </CardContent>

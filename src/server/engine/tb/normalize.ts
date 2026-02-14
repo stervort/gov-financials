@@ -23,6 +23,7 @@ export type TBRow = {
   finalBalance: number;
   auditGroup?: string;
   auditSubgroup?: string;
+  fundCode?: string;
 };
 
 export type TBColumnMap = {
@@ -205,6 +206,7 @@ export function buildRowsFromMatrixWithMap(matrix: any[][], map: TBColumnMap): T
       auditGroup: map.groupCol != null ? String(r[map.groupCol] ?? "").trim() || undefined : undefined,
       auditSubgroup:
         map.subgroupCol != null ? String(r[map.subgroupCol] ?? "").trim() || undefined : undefined,
+      fundCode: map.fundCol != null ? normalizeFundCode(r[map.fundCol]) || undefined : undefined,
     });
   }
 

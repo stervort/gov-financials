@@ -40,7 +40,6 @@ export default async function GroupingsPage({
         <CardHeader>
           <CardTitle>Groupings</CardTitle>
         </CardHeader>
-
         <CardContent className="space-y-4">
           {!data.importId ? (
             <div className="text-sm text-gray-600">

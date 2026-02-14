@@ -131,6 +131,7 @@ export async function finalizeTBMapping(formData: FormData) {
     creditCol: formData.get("creditCol") === "" ? null : Number(formData.get("creditCol")),
     groupCol: formData.get("groupCol") === "" ? null : Number(formData.get("groupCol")),
     subgroupCol: formData.get("subgroupCol") === "" ? null : Number(formData.get("subgroupCol")),
+    fundCol: formData.get("fundCol") === "" ? null : Number(formData.get("fundCol")),
   };
 
   if (!Number.isFinite(map.accountCol)) throw new Error("Account column is required.");
@@ -156,6 +157,7 @@ export async function finalizeTBMapping(formData: FormData) {
         finalBalance: r.finalBalance,
         auditGroup: r.auditGroup,
         auditSubgroup: r.auditSubgroup,
+        fundCode: (r as any).fundCode ?? null,
       })),
     });
 

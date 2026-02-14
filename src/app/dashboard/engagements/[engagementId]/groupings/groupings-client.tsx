@@ -1,15 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { updateGroupingsBulk } from "@/src/server/actions/groupings";
+import { useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/src/components/ui/button";
 import { Input } from "@/src/components/ui/input";
+import { updateGroupingsBulk } from "@/src/server/actions/groupings";
 
 type Line = {
   id: string;
   account: string;
   description: string | null;
-  finalBalance: number;
+  finalBalance: any;
   auditGroup: string | null;
   auditSubgroup: string | null;
   fundCode: string | null;
@@ -26,112 +27,108 @@ export default function GroupingsClient(props: {
   q: string;
   ungroupedOnly: boolean;
 }) {
-  const { engagementId, lines, total, page, pageSize, fundsByCode } = props;
-
+  const router = useRouter();
   const [isEditing, setIsEditing] = useState(false);
-  const [dirty, setDirty] = useState(false);
+  const [isPending, startTransition] = useTransition();
 
-  const [q, setQ] = useState(props.q ?? "");
-  const [ungroupedOnly, setUngroupedOnly] = useState(!!props.ungroupedOnly);
+  // local editable buffer
+  const [draft, setDraft] = useState<Record<string, { auditGroup: string; auditSubgroup: string }>>(
+    () =>
+      Object.fromEntries(
+        props.lines.map((l) => [
+          l.id,
+          { auditGroup: l.auditGroup ?? "", auditSubgroup: l.auditSubgroup ?? "" },
+        ])
+      )
+  );
 
-  const [draft, setDraft] = useState<
-    Record<string, { auditGroup: string; auditSubgroup: string }>
-  >({});
+  // snapshot used for Cancel
+  const [snapshot, setSnapshot] = useState(draft);
 
-  useEffect(() => {
-    const next: Record<string, { auditGroup: string; auditSubgroup: string }> = {};
-    for (const l of lines) {
-      next[l.id] = { auditGroup: l.auditGroup ?? "", auditSubgroup: l.auditSubgroup ?? "" };
+  const hasChanges = useMemo(() => {
+    for (const l of props.lines) {
+      const d = draft[l.id];
+      if (!d) continue;
+      if ((d.auditGroup ?? "") !== (l.auditGroup ?? "")) return true;
+      if ((d.auditSubgroup ?? "") !== (l.auditSubgroup ?? "")) return true;
     }
-    setDraft(next);
-    setDirty(false);
-    setIsEditing(false);
-  }, [lines]);
+    return false;
+  }, [draft, props.lines]);
 
-  const ungroupedCountOnPage = useMemo(() => {
-    return lines.filter((l) => !(l.auditGroup?.trim() || l.auditSubgroup?.trim())).length;
-  }, [lines]);
-
-  function setField(lineId: string, field: "auditGroup" | "auditSubgroup", value: string) {
-    setDraft((prev) => {
-      const next = {
-        ...prev,
-        [lineId]: { ...(prev[lineId] ?? { auditGroup: "", auditSubgroup: "" }) },
-      };
-      next[lineId][field] = value;
-      return next;
-    });
-    setDirty(true);
+  function setQueryParam(key: string, val: string) {
+    const sp = new URLSearchParams(window.location.search);
+    if (val) sp.set(key, val);
+    else sp.delete(key);
+    sp.delete("page"); // reset paging on filter change
+    router.push(`?${sp.toString()}`);
   }
 
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
-
-  function buildUrl(next: {
-    page?: number;
-    pageSize?: number;
-    q?: string;
-    ungroupedOnly?: boolean;
-  }) {
-    const sp = new URLSearchParams();
-    sp.set("page", String(next.page ?? page));
-    sp.set("pageSize", String(next.pageSize ?? pageSize));
-
-    const nq = (next.q ?? q).trim();
-    if (nq) sp.set("q", nq);
-
-    const uo = next.ungroupedOnly ?? ungroupedOnly;
-    if (uo) sp.set("ungroupedOnly", "1");
-
-    return `/dashboard/engagements/${engagementId}/groupings?${sp.toString()}`;
+  function gotoPage(p: number) {
+    const sp = new URLSearchParams(window.location.search);
+    sp.set("page", String(p));
+    router.push(`?${sp.toString()}`);
   }
 
-  async function onSave() {
-    const updates = Object.entries(draft).map(([lineId, v]) => ({
-      lineId,
-      auditGroup: v.auditGroup,
-      auditSubgroup: v.auditSubgroup,
-    }));
-
-    await updateGroupingsBulk({ engagementId, updates });
-    setDirty(false);
-    setIsEditing(false);
-  }
-
-  function onCancel() {
-    const next: Record<string, { auditGroup: string; auditSubgroup: string }> = {};
-    for (const l of lines) {
-      next[l.id] = { auditGroup: l.auditGroup ?? "", auditSubgroup: l.auditSubgroup ?? "" };
-    }
-    setDraft(next);
-    setDirty(false);
-    setIsEditing(false);
-  }
+  const totalPages = Math.max(1, Math.ceil(props.total / props.pageSize));
 
   return (
     <div className="space-y-4">
-      {/* Top toolbar */}
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="text-sm text-gray-600">
-            Showing <span className="font-medium">{lines.length}</span> of{" "}
-            <span className="font-medium">{total}</span> lines (page {page} / {totalPages})
-          </div>
-          <div className="text-sm text-gray-600">
-            Ungrouped on this page: <span className="font-medium">{ungroupedCountOnPage}</span>
-          </div>
+      {/* Controls */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Input
+            placeholder="Search account, description, fund, group..."
+            defaultValue={props.q}
+            onChange={(e) => setQueryParam("q", e.target.value)}
+            className="w-[320px]"
+          />
+          <label className="text-sm flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={props.ungroupedOnly}
+              onChange={(e) => setQueryParam("ungroupedOnly", e.target.checked ? "1" : "")}
+            />
+            Only ungrouped
+          </label>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 justify-end">
+        <div className="flex items-center gap-2">
           {!isEditing ? (
-            <Button variant="secondary" onClick={() => setIsEditing(true)}>
+            <Button
+              onClick={() => {
+                setSnapshot(draft);
+                setIsEditing(true);
+              }}
+            >
               Edit
             </Button>
           ) : (
             <>
-              <Button onClick={onSave} disabled={!dirty}>
+              <Button
+                disabled={!hasChanges || isPending}
+                onClick={() => {
+                  startTransition(async () => {
+                    const updates = props.lines.map((l) => ({
+                      lineId: l.id,
+                      auditGroup: draft[l.id]?.auditGroup ?? "",
+                      auditSubgroup: draft[l.id]?.auditSubgroup ?? "",
+                    }));
+                    await updateGroupingsBulk({ engagementId: props.engagementId, updates });
+                    setIsEditing(false);
+                    router.refresh();
+                  });
+                }}
+              >
                 Save
               </Button>
-              <Button variant="secondary" onClick={onCancel}>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setDraft(snapshot);
+                  setIsEditing(false);
+                }}
+                disabled={isPending}
+              >
                 Cancel
               </Button>
             </>
@@ -139,95 +136,64 @@ export default function GroupingsClient(props: {
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div className="flex items-center gap-2">
-          <Input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search account, description, fund, group, subgroup..."
-            className="w-full md:w-[420px]"
-          />
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={() => {
-              window.location.href = buildUrl({ page: 1, q, ungroupedOnly });
-            }}
-          >
-            Apply
-          </Button>
-        </div>
-
-        <label className="flex items-center gap-2 text-sm select-none">
-          <input
-            type="checkbox"
-            checked={ungroupedOnly}
-            onChange={(e) => {
-              const v = e.target.checked;
-              setUngroupedOnly(v);
-              window.location.href = buildUrl({ page: 1, ungroupedOnly: v });
-            }}
-          />
-          Ungrouped only
-        </label>
-      </div>
-
       {/* Table */}
-      <div className="overflow-auto border rounded-md">
-        <table className="min-w-[980px] w-full text-sm">
-          <thead className="bg-gray-50 text-left">
-            <tr>
-              <th className="px-3 py-2 w-[140px]">Account</th>
+      <div className="border rounded-md overflow-auto">
+        <table className="min-w-full text-sm">
+          <thead className="bg-gray-50">
+            <tr className="text-left">
+              <th className="px-3 py-2">Account</th>
               <th className="px-3 py-2">Description</th>
-              <th className="px-3 py-2 w-[200px]">Fund</th>
-              <th className="px-3 py-2 w-[180px]">Group</th>
-              <th className="px-3 py-2 w-[180px]">Subgroup</th>
-              <th className="px-3 py-2 w-[140px] text-right">Amount</th>
+              <th className="px-3 py-2">Fund</th>
+              <th className="px-3 py-2">Group</th>
+              <th className="px-3 py-2">Subgroup</th>
+              <th className="px-3 py-2 text-right">Amount</th>
             </tr>
           </thead>
-
-          <tbody className="divide-y">
-            {lines.map((l) => {
-              const isUngrouped = !(l.auditGroup?.trim() || l.auditSubgroup?.trim());
-              const fund = l.fundCode ? fundsByCode[l.fundCode] : null;
+          <tbody>
+            {props.lines.map((l) => {
+              const d = draft[l.id] ?? { auditGroup: "", auditSubgroup: "" };
+              const ungrouped = !(d.auditGroup?.trim() || d.auditSubgroup?.trim());
+              const fund = l.fundCode ? props.fundsByCode[l.fundCode] : null;
               const fundLabel = l.fundCode
                 ? `${l.fundCode}${fund?.name ? ` - ${fund.name}` : ""}`
                 : "";
 
-              const row = draft[l.id] ?? { auditGroup: "", auditSubgroup: "" };
-
               return (
-                <tr key={l.id} className={isUngrouped ? "bg-red-50" : ""}>
+                <tr key={l.id} className={`border-t ${ungrouped ? "bg-red-50" : ""}`}>
                   <td className="px-3 py-2 font-mono">{l.account}</td>
                   <td className="px-3 py-2">{l.description ?? ""}</td>
                   <td className="px-3 py-2">{fundLabel}</td>
 
                   <td className="px-3 py-2">
                     <Input
-                      value={row.auditGroup}
+                      value={d.auditGroup}
                       disabled={!isEditing}
                       className={isEditing ? "bg-white" : "bg-gray-100"}
-                      onChange={(e) => setField(l.id, "auditGroup", e.target.value)}
-                      placeholder="(none)"
+                      onChange={(e) =>
+                        setDraft((prev) => ({
+                          ...prev,
+                          [l.id]: { ...prev[l.id], auditGroup: e.target.value },
+                        }))
+                      }
                     />
                   </td>
 
                   <td className="px-3 py-2">
                     <Input
-                      value={row.auditSubgroup}
+                      value={d.auditSubgroup}
                       disabled={!isEditing}
                       className={isEditing ? "bg-white" : "bg-gray-100"}
-                      onChange={(e) => setField(l.id, "auditSubgroup", e.target.value)}
-                      placeholder="(none)"
+                      onChange={(e) =>
+                        setDraft((prev) => ({
+                          ...prev,
+                          [l.id]: { ...prev[l.id], auditSubgroup: e.target.value },
+                        }))
+                      }
                     />
                   </td>
 
                   <td className="px-3 py-2 text-right font-mono">
-                    {Number(l.finalBalance ?? 0).toLocaleString(undefined, {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    })}
+                    {Number(l.finalBalance ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </td>
                 </tr>
               );
@@ -237,23 +203,22 @@ export default function GroupingsClient(props: {
       </div>
 
       {/* Pagination */}
-      <div className="flex items-center justify-between">
-        <div className="text-sm text-gray-600">
-          Page {page} of {totalPages}
+      <div className="flex items-center justify-between text-sm">
+        <div>
+          Showing {(props.page - 1) * props.pageSize + 1}–{Math.min(props.total, props.page * props.pageSize)} of{" "}
+          {props.total}
         </div>
-
         <div className="flex items-center gap-2">
-          <Button
-            variant="secondary"
-            disabled={page <= 1}
-            onClick={() => (window.location.href = buildUrl({ page: Math.max(1, page - 1) }))}
-          >
+          <Button variant="secondary" disabled={props.page <= 1} onClick={() => gotoPage(props.page - 1)}>
             Prev
           </Button>
+          <span>
+            Page {props.page} / {totalPages}
+          </span>
           <Button
             variant="secondary"
-            disabled={page >= totalPages}
-            onClick={() => (window.location.href = buildUrl({ page: Math.min(totalPages, page + 1) }))}
+            disabled={props.page >= totalPages}
+            onClick={() => gotoPage(props.page + 1)}
           >
             Next
           </Button>

@@ -58,13 +58,6 @@ export type GroupingLinesResult = {
   lines: GroupingLineRow[];
 };
 
-function toNumber(v: unknown): number {
-  // Prisma Decimal -> number (also supports number)
-  if (typeof v === "number") return v;
-  if (v == null) return 0;
-  return Number(v);
-}
-
 export async function listGroupingLines(
   engagementId: string,
   opts?: { page?: number; pageSize?: number; q?: string; ungroupedOnly?: boolean }
@@ -83,8 +76,8 @@ export async function listGroupingLines(
 
   if (!imp) {
     return {
-      importId: null,
-      fundsByCode: {},
+      importId: null as string | null,
+      fundsByCode: {} as Record<string, { fundCode: string; name: string | null }>,
       page,
       pageSize,
       total: 0,
@@ -100,9 +93,7 @@ export async function listGroupingLines(
   });
 
   const fundsByCode: Record<string, { fundCode: string; name: string | null }> = {};
-  for (const f of funds) {
-    fundsByCode[f.fundCode] = { fundCode: f.fundCode, name: f.name ?? null };
-  }
+  for (const f of funds) fundsByCode[f.fundCode] = { fundCode: f.fundCode, name: f.name ?? null };
 
   // Filtering/search
   const where: any = { importId: imp.id };
@@ -121,12 +112,16 @@ export async function listGroupingLines(
   if (opts?.ungroupedOnly) {
     // only show lines where BOTH audit group/subgroup are blank
     where.AND = [
-      { OR: [{ auditGroup: null }, { auditGroup: "" }] },
-      { OR: [{ auditSubgroup: null }, { auditSubgroup: "" }] },
+      {
+        OR: [{ auditGroup: null }, { auditGroup: "" }],
+      },
+      {
+        OR: [{ auditSubgroup: null }, { auditSubgroup: "" }],
+      },
     ];
   }
 
-  const [total, rawLines] = await Promise.all([
+  const [total, lines] = await Promise.all([
     db.trialBalanceLine.count({ where }),
     db.trialBalanceLine.findMany({
       where,
@@ -137,7 +132,7 @@ export async function listGroupingLines(
         id: true,
         account: true,
         description: true,
-        finalBalance: true, // Prisma Decimal in many setups
+        finalBalance: true,
         auditGroup: true,
         auditSubgroup: true,
         fundCode: true,
@@ -145,23 +140,13 @@ export async function listGroupingLines(
     }),
   ]);
 
-  const lines: GroupingLineRow[] = rawLines.map((l) => ({
-    id: l.id,
-    account: l.account,
-    description: l.description,
-    finalBalance: toNumber(l.finalBalance),
-    auditGroup: l.auditGroup,
-    auditSubgroup: l.auditSubgroup,
-    fundCode: l.fundCode,
-  }));
-
   return {
     importId: imp.id,
     fundsByCode,
     page,
     pageSize,
     total,
-    lines,
+    lines: lines as GroupingLineRow[],
   };
 }
 
