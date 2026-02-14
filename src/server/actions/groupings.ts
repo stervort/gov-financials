@@ -26,25 +26,27 @@ export async function getGroupingCounts(engagementId: string) {
   if (!latest) return { total: 0, grouped: 0, ungrouped: 0 };
 
   const total = await db.trialBalanceLine.count({ where: { importId: latest.id } });
+
   const grouped = await db.trialBalanceLine.count({
     where: {
       importId: latest.id,
-      OR: [
-        { auditGroup: { not: null } },
-        { auditSubgroup: { not: null } },
-      ],
+      OR: [{ auditGroup: { not: null } }, { auditSubgroup: { not: null } }],
     },
   });
+
   const ungrouped = total - grouped;
   return { total, grouped, ungrouped };
 }
 
-export async function listGroupingLines(engagementId: string, opts?: { page?: number; pageSize?: number; q?: string; ungroupedOnly?: boolean }) {
+export async function listGroupingLines(
+  engagementId: string,
+  opts?: { page?: number; pageSize?: number; q?: string; ungroupedOnly?: boolean }
+) {
   const org = await ensureDefaultOrg();
-  await db.engagement.findFirstOrThrow({ where: { id: engagementId, organizationId: org.id } });
+  await assertEngagement(org.id, engagementId);
 
   const page = Math.max(opts?.page ?? 1, 1);
-  const pageSize = Math.min(Math.max(opts?.pageSize ?? 200, 25), 500);
+  const pageSize = Math.min(Math.max(opts?.pageSize ?? 50, 25), 500);
   const skip = (page - 1) * pageSize;
 
   const imp = await db.trialBalanceImport.findFirst({
@@ -52,25 +54,54 @@ export async function listGroupingLines(engagementId: string, opts?: { page?: nu
     orderBy: { createdAt: "desc" },
   });
 
-  if (!imp) return { page, pageSize, total: 0, lines: [] as any[] };
+  if (!imp) {
+    return {
+      importId: null as string | null,
+      fundsByCode: {} as Record<string, { fundCode: string; name: string | null }>,
+      page,
+      pageSize,
+      total: 0,
+      lines: [] as any[],
+    };
+  }
 
+  // funds map for "10 - General Fund" display
+  const funds = await db.fund.findMany({
+    where: { engagementId },
+    select: { fundCode: true, name: true },
+    orderBy: { fundCode: "asc" },
+  });
+
+  const fundsByCode: Record<string, { fundCode: string; name: string | null }> = {};
+  for (const f of funds) fundsByCode[f.fundCode] = { fundCode: f.fundCode, name: f.name ?? null };
+
+  // Filtering/search
   const where: any = { importId: imp.id };
-  if (opts?.q) {
+
+  const q = (opts?.q ?? "").trim();
+  if (q) {
     where.OR = [
-      { account: { contains: opts.q, mode: "insensitive" } },
-      { description: { contains: opts.q, mode: "insensitive" } },
-      { group: { contains: opts.q, mode: "insensitive" } },
-      { subgroup: { contains: opts.q, mode: "insensitive" } },
-      { fundCode: { contains: opts.q, mode: "insensitive" } },
+      { account: { contains: q, mode: "insensitive" } },
+      { description: { contains: q, mode: "insensitive" } },
+      { auditGroup: { contains: q, mode: "insensitive" } },
+      { auditSubgroup: { contains: q, mode: "insensitive" } },
+      { fundCode: { contains: q, mode: "insensitive" } },
     ];
   }
+
   if (opts?.ungroupedOnly) {
-    where.OR = where.OR ?? [];
-    where.OR.push({ group: null }, { group: "" }, { subgroup: null }, { subgroup: "" });
+    // only show lines where BOTH audit group/subgroup are blank
+    where.AND = [
+      {
+        OR: [{ auditGroup: null }, { auditGroup: "" }],
+      },
+      {
+        OR: [{ auditSubgroup: null }, { auditSubgroup: "" }],
+      },
+    ];
   }
 
-  const [funds, total, lines] = await Promise.all([
-    db.fund.findMany({ where: { engagementId }, select: { fundCode: true, name: true } }),
+  const [total, lines] = await Promise.all([
     db.trialBalanceLine.count({ where }),
     db.trialBalanceLine.findMany({
       where,
@@ -81,22 +112,24 @@ export async function listGroupingLines(engagementId: string, opts?: { page?: nu
         id: true,
         account: true,
         description: true,
-        group: true,
-        subgroup: true,
-        amount: true,
+        finalBalance: true,
+        auditGroup: true,
+        auditSubgroup: true,
         fundCode: true,
       },
     }),
   ]);
 
-  const fundMap = new Map(funds.map(f => [f.fundCode, f.name]));
-  const decorated = lines.map(l => ({
-    ...l,
-    fundLabel: l.fundCode ? `${l.fundCode}${fundMap.get(l.fundCode) ? ` - ${fundMap.get(l.fundCode)}` : ""}` : "",
-  }));
-
-  return { page, pageSize, total, lines: decorated };
+  return {
+    importId: imp.id,
+    fundsByCode,
+    page,
+    pageSize,
+    total,
+    lines,
+  };
 }
+
 const BulkUpdate = z.object({
   engagementId: z.string().min(1),
   updates: z.array(
@@ -116,7 +149,6 @@ export async function updateGroupingsBulk(payload: {
   const v = BulkUpdate.parse(payload);
   await assertEngagement(org.id, v.engagementId);
 
-  // transaction: apply all updates
   await db.$transaction(
     v.updates.map((u) =>
       db.trialBalanceLine.update({
