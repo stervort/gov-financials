@@ -6,7 +6,6 @@ import {
   parseCSVToMatrix,
   parseExcelToMatrix,
   detectHasHeaders,
-  buildRowsFromMatrixWithHeaders,
   buildRowsFromMatrixWithMap,
   TBColumnMap,
 } from "@/src/server/engine/tb/normalize";
@@ -41,12 +40,15 @@ async function runFundDetection(engagementId: string, importId: string, rules: a
   }
 }
 
+/**
+ * Upload TB (CSV/XLS/XLSX) -> create staging import (NEEDS_MAPPING) -> redirect to mapping UI
+ */
 export async function uploadTB(formData: FormData) {
   const org = await ensureDefaultOrg();
   const engagementId = String(formData.get("engagementId") ?? "");
   if (!engagementId) throw new Error("Missing engagementId");
 
-  const e = await assertEngagement(org.id, engagementId);
+  await assertEngagement(org.id, engagementId);
 
   const file = formData.get("file");
   if (!(file instanceof File)) throw new Error("No file uploaded");
@@ -64,39 +66,36 @@ export async function uploadTB(formData: FormData) {
     fileType = "excel";
     matrix = parseExcelToMatrix(buf);
   } else {
-    throw new Error("Unsupported file type. Please upload CSV, XLSX, or XLS.");
+    throw new Error("Unsupported file type. Upload .csv, .xlsx, or .xls");
   }
 
-  const suggestedHasHeaders = detectHasHeaders(matrix);
+  if (!matrix || matrix.length === 0) throw new Error("File appears empty.");
 
-  // Create a new import that requires mapping
+  // Suggest header detection but always require mapping step
+  const hasHeadersSuggested = detectHasHeaders(matrix[0] ?? []);
+
   const imp = await db.trialBalanceImport.create({
     data: {
       engagementId,
-      filename: file.name || "upload",
-      fileType,
+      filename: file.name,
       status: "NEEDS_MAPPING",
-      suggestedHasHeaders,
-      rawMatrix: matrix as any,
+      fileType: fileType ?? undefined,
+      hasHeaders: hasHeadersSuggested,
+      rawMatrix: matrix,
+      rowCount: 0,
+      totalBalance: 0,
     },
   });
 
   revalidatePath(`/dashboard/engagements/${engagementId}`);
   revalidatePath(`/dashboard/engagements/${engagementId}/tb`);
-  revalidatePath(`/dashboard`);
   redirect(`/dashboard/engagements/${engagementId}/tb/map/${imp.id}`);
 }
 
-export async function getLatestImport(engagementId: string) {
-  const org = await ensureDefaultOrg();
-  await db.engagement.findFirstOrThrow({ where: { id: engagementId, organizationId: org.id } });
-
-  return db.trialBalanceImport.findFirst({
-    where: { engagementId },
-    orderBy: { createdAt: "desc" },
-  });
-}
-
+/**
+ * Mapping finalization -> create TB lines -> mark IMPORTED -> run fund detection
+ * ✅ Redirect back to engagement home so user can proceed with Groupings/Funds
+ */
 export async function finalizeTBMapping(formData: FormData) {
   const org = await ensureDefaultOrg();
   const engagementId = String(formData.get("engagementId") ?? "");
@@ -110,15 +109,13 @@ export async function finalizeTBMapping(formData: FormData) {
   });
 
   if (imp.status !== "NEEDS_MAPPING") {
-    redirect(`/dashboard/engagements/${engagementId}/tb`);
+    redirect(`/dashboard/engagements/${engagementId}`);
   }
 
   const raw = imp.rawMatrix as any;
   const matrix: any[][] = Array.isArray(raw) ? raw : [];
   if (!matrix.length) throw new Error("Missing rawMatrix. Re-upload the TB.");
 
-  // Header rows: user chooses how many rows to skip before the TB data starts.
-  // If they say "no headers", we skip 0.
   const hasHeaders = String(formData.get("hasHeaders") ?? "").toLowerCase() === "true";
   const headerRowsToSkipRaw = Number(formData.get("headerRowsToSkip") ?? 0);
   const headerRowsToSkip =
@@ -191,7 +188,7 @@ export async function finalizeTBMapping(formData: FormData) {
   revalidatePath(`/dashboard/engagements/${engagementId}/funds`);
   revalidatePath(`/dashboard`);
 
-  // ✅ IMPORTANT: send user back to engagement home (not /tb)
+  // ✅ Send user back to the engagement page (your requested workflow)
   redirect(`/dashboard/engagements/${engagementId}`);
 }
 
@@ -223,4 +220,41 @@ export async function clearTB(formData: FormData) {
   revalidatePath(`/dashboard/engagements/${engagementId}/tb`);
   revalidatePath(`/dashboard`);
   redirect(`/dashboard/engagements/${engagementId}`);
+}
+
+export async function getLatestImport(engagementId: string) {
+  const org = await ensureDefaultOrg();
+  await db.engagement.findFirstOrThrow({ where: { id: engagementId, organizationId: org.id } });
+
+  return db.trialBalanceImport.findFirst({
+    where: { engagementId },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
+/**
+ * ✅ Needed by /tb page for preview
+ */
+export async function getImportPreview(importId: string) {
+  return db.trialBalanceImport.findFirstOrThrow({
+    where: { id: importId },
+    include: { lines: { take: 50, orderBy: { account: "asc" } } },
+  });
+}
+
+/**
+ * ✅ Needed by mapping page
+ */
+export async function getImportForMapping(importId: string) {
+  return db.trialBalanceImport.findFirstOrThrow({
+    where: { id: importId },
+    select: {
+      id: true,
+      engagementId: true,
+      filename: true,
+      status: true,
+      rawMatrix: true,
+      hasHeaders: true,
+    },
+  });
 }
