@@ -10,7 +10,8 @@ export default async function EngagementHome({ params }: { params: { engagementI
   const e = await getEngagement(params.engagementId);
   const latest = await getLatestImport(params.engagementId);
 
-  const tbMapped = !!latest && latest.status === "MAPPED";
+  // ✅ Correct: after mapping+finalize we set status to "IMPORTED"
+  const tbImported = !!latest && latest.status === "IMPORTED";
 
   return (
     <div className="space-y-6">
@@ -24,10 +25,10 @@ export default async function EngagementHome({ params }: { params: { engagementI
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
           <CardHeader>
-            <CardTitle>1) Import TB</CardTitle>
+            <CardTitle>1) Trial Balance</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
               <Link href={`/dashboard/engagements/${e.id}/tb`}>
                 <Button>Upload</Button>
               </Link>
@@ -50,18 +51,18 @@ export default async function EngagementHome({ params }: { params: { engagementI
 
             {latest ? (
               <div className="text-xs text-gray-500">
-                Latest: {latest.filename} 
-                <span className={tbMapped ? "text-green-700" : "text-amber-700"}>
-                  {tbMapped ? " (mapped)" : " (needs mapping)"}
+                Latest: {latest.filename}{" "}
+                <span className={tbImported ? "text-green-700" : "text-amber-700"}>
+                  {tbImported ? " (imported)" : " (needs mapping)"}
                 </span>
               </div>
             ) : (
               <div className="text-xs text-gray-500">No TB yet</div>
             )}
 
-            {!tbMapped ? (
+            {!tbImported ? (
               <div className="text-xs text-amber-700">
-                Next steps are locked until the latest Trial Balance is mapped.
+                Next steps are locked until the latest Trial Balance is imported.
               </div>
             ) : null}
           </CardContent>
@@ -69,12 +70,12 @@ export default async function EngagementHome({ params }: { params: { engagementI
 
         <Card>
           <CardHeader>
-            <CardTitle>2) Fund Rules</CardTitle>
+            <CardTitle>2) Account Groupings</CardTitle>
           </CardHeader>
           <CardContent>
-            <Link href={`/dashboard/engagements/${e.id}/fund-rules`}>
-              <Button variant="secondary" disabled={!tbMapped}>
-                Edit
+            <Link href={`/dashboard/engagements/${e.id}/groupings`}>
+              <Button variant="secondary" disabled={!tbImported}>
+                Open
               </Button>
             </Link>
           </CardContent>
@@ -82,12 +83,12 @@ export default async function EngagementHome({ params }: { params: { engagementI
 
         <Card>
           <CardHeader>
-            <CardTitle>3) Funds</CardTitle>
+            <CardTitle>3) Fund Setup</CardTitle>
           </CardHeader>
           <CardContent>
             <Link href={`/dashboard/engagements/${e.id}/funds`}>
-              <Button variant="secondary" disabled={!tbMapped}>
-                Manage
+              <Button variant="secondary" disabled={!tbImported}>
+                Open
               </Button>
             </Link>
           </CardContent>
