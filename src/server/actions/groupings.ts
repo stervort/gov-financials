@@ -42,7 +42,7 @@ export type GroupingLineRow = {
   id: string;
   account: string;
   description: string | null;
-  finalBalance: number;
+  finalBalance: number; // ✅ we will convert Decimal -> number
   auditGroup: string | null;
   auditSubgroup: string | null;
   fundCode: string | null;
@@ -76,8 +76,8 @@ export async function listGroupingLines(
 
   if (!imp) {
     return {
-      importId: null as string | null,
-      fundsByCode: {} as Record<string, { fundCode: string; name: string | null }>,
+      importId: null,
+      fundsByCode: {},
       page,
       pageSize,
       total: 0,
@@ -140,13 +140,24 @@ export async function listGroupingLines(
     }),
   ]);
 
+  // ✅ Convert Prisma Decimal -> number
+  const normalized: GroupingLineRow[] = lines.map((l: any) => ({
+    id: l.id,
+    account: l.account,
+    description: l.description ?? null,
+    finalBalance: l.finalBalance == null ? 0 : Number(l.finalBalance),
+    auditGroup: l.auditGroup ?? null,
+    auditSubgroup: l.auditSubgroup ?? null,
+    fundCode: l.fundCode ?? null,
+  }));
+
   return {
     importId: imp.id,
     fundsByCode,
     page,
     pageSize,
     total,
-    lines: lines as GroupingLineRow[],
+    lines: normalized,
   };
 }
 
