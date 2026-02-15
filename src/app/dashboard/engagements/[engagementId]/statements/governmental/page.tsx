@@ -32,6 +32,7 @@ export default async function GovernmentalStatementsHome({ params }: { params: P
               <span className="ml-2 text-green-700">(all set)</span>
             )}
           </div>
+
           {!canProceed && (
             <div className="text-xs text-gray-600">
               Finish Fund Setup first (every TB line needs a Fund Code) before building statements.
@@ -44,16 +45,18 @@ export default async function GovernmentalStatementsHome({ params }: { params: P
         <CardHeader>
           <CardTitle>Available statements</CardTitle>
         </CardHeader>
+
         <CardContent className="space-y-3">
           <div className="flex flex-wrap gap-2">
-            <Button asChild disabled={!canProceed}>
+            {canProceed ? (
               <Link href={`/dashboard/engagements/${params.engagementId}/statements/governmental/balance-sheet`}>
-                Balance Sheet (Governmental Funds)
+                <Button>Balance Sheet (Governmental Funds)</Button>
               </Link>
-            </Button>
-            <Button asChild disabled>
-              <Link href="#">Revenues, Expenditures & Changes (coming next)</Link>
-            </Button>
+            ) : (
+              <Button disabled>Balance Sheet (Governmental Funds)</Button>
+            )}
+
+            <Button disabled>Revenues, Expenditures & Changes (coming next)</Button>
           </div>
 
           <div className="pt-2 text-xs text-gray-600">
