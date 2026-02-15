@@ -240,6 +240,25 @@ export async function getLatestImport(engagementId: string) {
   });
 }
 
+export async function getFundAssignmentCounts(engagementId: string) {
+  const org = await ensureDefaultOrg();
+  await db.engagement.findFirstOrThrow({ where: { id: engagementId, organizationId: org.id } });
+
+  const imp = await db.trialBalanceImport.findFirst({
+    where: { engagementId, status: "IMPORTED" },
+    orderBy: { createdAt: "desc" },
+    select: { id: true },
+  });
+
+  if (!imp) return { importId: null as string | null, total: 0, assigned: 0, unassigned: 0 };
+
+  const total = await db.trialBalanceLine.count({ where: { importId: imp.id } });
+  const assigned = await db.trialBalanceLine.count({ where: { importId: imp.id, fundCode: { not: null } } });
+  const unassigned = total - assigned;
+
+  return { importId: imp.id, total, assigned, unassigned };
+}
+
 /**
  * ✅ Needed by /tb page for preview
  */

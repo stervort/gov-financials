@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 
 import Link from "next/link";
 import { getEngagement } from "@/src/server/actions/engagements";
-import { getLatestImport, clearTB } from "@/src/server/actions/tb";
+import { getLatestImport, clearTB, getFundAssignmentCounts } from "@/src/server/actions/tb";
 import { getGroupingCounts } from "@/src/server/actions/groupings";
 import { Card, CardContent, CardHeader, CardTitle } from "@/src/components/ui/card";
 import { Button } from "@/src/components/ui/button";
@@ -13,6 +13,8 @@ export default async function EngagementHome({ params }: { params: { engagementI
 
   const tbImported = !!latest && latest.status === "IMPORTED";
   const counts = tbImported ? await getGroupingCounts(e.id) : { total: 0, grouped: 0, ungrouped: 0 };
+  const fundCounts = tbImported ? await getFundAssignmentCounts(e.id) : { importId: null, total: 0, assigned: 0, unassigned: 0 };
+  const fundsReady = tbImported && fundCounts.unassigned === 0;
 
   return (
     <div className="space-y-6">
@@ -21,7 +23,7 @@ export default async function EngagementHome({ params }: { params: { engagementI
         <div className="text-sm text-gray-500">FYE: {new Date(e.fiscalYearEnd).toLocaleDateString()}</div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         {/* 1) TB */}
         <Card>
           <CardHeader>
@@ -70,6 +72,16 @@ export default async function EngagementHome({ params }: { params: { engagementI
                 Open Funds
               </Button>
             </Link>
+            {tbImported ? (
+              <div className="text-xs text-gray-600">
+                Fund codes assigned: <span className="font-medium">{fundCounts.assigned}</span> / {fundCounts.total}
+                {fundCounts.unassigned > 0 ? (
+                  <span className="ml-2 text-red-600">({fundCounts.unassigned} missing)</span>
+                ) : (
+                  <span className="ml-2 text-green-700">(all set)</span>
+                )}
+              </div>
+            ) : null}
             {!tbImported ? <div className="text-xs text-gray-500">Upload + finalize TB first.</div> : null}
           </CardContent>
         </Card>
@@ -97,6 +109,26 @@ export default async function EngagementHome({ params }: { params: { engagementI
               </Button>
             </Link>
             {!tbImported ? <div className="text-xs text-gray-500">Upload + finalize TB first.</div> : null}
+          </CardContent>
+        </Card>
+
+        {/* 4) Statements */}
+        <Card className={!fundsReady ? "opacity-60" : ""}>
+          <CardHeader>
+            <CardTitle>4) Fund Statements</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="text-sm text-gray-600">Build governmental fund statements from your TB + assignments.</div>
+            <Link href={`/dashboard/engagements/${e.id}/statements/governmental`}>
+              <Button disabled={!fundsReady} variant="secondary">
+                Open Statements
+              </Button>
+            </Link>
+            {!tbImported ? (
+              <div className="text-xs text-gray-500">Upload + finalize TB first.</div>
+            ) : fundCounts.unassigned > 0 ? (
+              <div className="text-xs text-gray-500">Finish Fund Setup first (every TB line needs a Fund Code).</div>
+            ) : null}
           </CardContent>
         </Card>
       </div>

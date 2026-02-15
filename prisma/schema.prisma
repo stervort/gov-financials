@@ -34,9 +34,9 @@ model Engagement {
   fundRules     FundDetectionRule[]
   funds         Fund[]
 
-  // ✅ Added back-relations (fixes missing opposite fields)
-  statementTemplates    StatementTemplate[]
-  statementAssignments  StatementLineAssignment[]
+  // Financial statement templates + assignments (built from TB)
+  statementTemplates   StatementTemplate[]
+  statementAssignments StatementLineAssignment[]
 
   @@index([organizationId])
 }
@@ -50,7 +50,7 @@ model TrialBalanceImport {
   rowCount     Int      @default(0)
   totalBalance Decimal  @default(0) @db.Decimal(18,2)
 
-  // supports CSV/XLSX and headerless/manual mapping
+  // NEW: supports CSV/XLSX and headerless/manual mapping
   fileType   String?
   hasHeaders Boolean @default(true)
   rawMatrix  Json?
@@ -59,7 +59,7 @@ model TrialBalanceImport {
   engagement Engagement        @relation(fields: [engagementId], references: [id])
   lines      TrialBalanceLine[]
 
-  // ✅ Added back-relation (fixes missing opposite field)
+  // Financial statement assignments tied to this import
   statementAssignments StatementLineAssignment[]
 
   @@index([engagementId])
@@ -71,14 +71,13 @@ model TrialBalanceLine {
   account       String
   description   String?
   finalBalance  Decimal  @db.Decimal(18,2)
-
-  // Current grouping used by the app (editable)
+  // These fields are the *current* grouping used by the app (can be edited by the user).
   auditGroup    String?
   auditSubgroup String?
   fundCode      String?
   fundType      FundType?
 
-  // Preserves what was uploaded (read-only reference)
+  // These fields preserve what was uploaded (read-only reference for the user).
   originalAuditGroup    String?
   originalAuditSubgroup String?
   originalFundCode      String?
@@ -116,7 +115,7 @@ model StatementTemplate {
   createdAt    DateTime      @default(now())
 
   engagement Engagement @relation(fields: [engagementId], references: [id])
-  lineItems   StatementLineItem[]
+  lineItems  StatementLineItem[]
 
   @@index([engagementId])
   @@index([statement])
@@ -129,12 +128,14 @@ model StatementLineItem {
   label       String
   accountType AccountType @default(OTHER)
 
-  template    StatementTemplate        @relation(fields: [templateId], references: [id])
+  template StatementTemplate @relation(fields: [templateId], references: [id])
   assignments StatementLineAssignment[]
 
   @@index([templateId])
 }
 
+// Assigns Trial Balance Lines to a specific statement line item.
+// This is the "financial statement grouping" and can differ from uploaded (original) groupings.
 model StatementLineAssignment {
   id           String   @id @default(cuid())
   engagementId String
@@ -144,10 +145,10 @@ model StatementLineAssignment {
   fundCode     String?
   createdAt    DateTime @default(now())
 
-  tbLine     TrialBalanceLine   @relation(fields: [tbLineId], references: [id])
-  lineItem   StatementLineItem  @relation(fields: [lineItemId], references: [id])
-  engagement Engagement         @relation(fields: [engagementId], references: [id])
-  import     TrialBalanceImport @relation(fields: [importId], references: [id])
+  tbLine      TrialBalanceLine    @relation(fields: [tbLineId], references: [id])
+  lineItem    StatementLineItem   @relation(fields: [lineItemId], references: [id])
+  engagement  Engagement          @relation(fields: [engagementId], references: [id])
+  import      TrialBalanceImport  @relation(fields: [importId], references: [id])
 
   @@index([engagementId])
   @@index([importId])
