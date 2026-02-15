@@ -3,93 +3,96 @@
 import { db } from "@/src/lib/db";
 import { ensureDefaultOrg } from "@/src/server/security/tenant";
 import { revalidatePath } from "next/cache";
-import { z } from "zod";
-
-type StatementType =
-  | "GOV_FUNDS_BALANCE_SHEET"
-  | "GOV_FUNDS_REVENUES_EXPENDITURES_CHANGES";
+import { FsType, StatementType } from "@prisma/client";
 
 async function assertEngagement(orgId: string, engagementId: string) {
-  return db.engagement.findFirstOrThrow({ where: { id: engagementId, organizationId: orgId } });
+  return db.engagement.findFirstOrThrow({
+    where: { id: engagementId, organizationId: orgId },
+    select: { id: true },
+  });
+}
+
+// UI-friendly aliases (keeps routes readable) -> Prisma enum values
+export type StatementTemplateKey = "GOV_FUNDS_BALANCE_SHEET" | "GOV_FUNDS_REVENUES_EXP_CHANGES";
+
+function keyToStatementType(key: StatementTemplateKey): StatementType {
+  switch (key) {
+    case "GOV_FUNDS_BALANCE_SHEET":
+      return "GOVERNMENTAL_FUNDS_BS";
+    case "GOV_FUNDS_REVENUES_EXP_CHANGES":
+      return "GOVERNMENTAL_FUNDS_IS";
+  }
+}
+
+type DefaultLineItem = { name: string; fsType: FsType };
+
+// Minimal default line items (illustrative ACFR-ish). Users can refine later.
+const GOV_FUNDS_BS_DEFAULTS: DefaultLineItem[] = [
+  { name: "Cash and pooled investments", fsType: "ASSET" },
+  { name: "Receivables", fsType: "ASSET" },
+  { name: "Due from other funds", fsType: "ASSET" },
+  { name: "Inventory", fsType: "ASSET" },
+  { name: "Prepaid items", fsType: "ASSET" },
+  { name: "Total assets", fsType: "ASSET" },
+
+  { name: "Accounts payable", fsType: "LIABILITY" },
+  { name: "Accrued liabilities", fsType: "LIABILITY" },
+  { name: "Due to other funds", fsType: "LIABILITY" },
+  { name: "Unearned revenue", fsType: "LIABILITY" },
+  { name: "Total liabilities", fsType: "LIABILITY" },
+
+  { name: "Fund balances", fsType: "EQUITY" },
+  { name: "Total liabilities and fund balances", fsType: "EQUITY" },
+];
+
+const GOV_FUNDS_IS_DEFAULTS: DefaultLineItem[] = [
+  { name: "Revenues", fsType: "REVENUE" },
+  { name: "Expenditures", fsType: "EXPENSE" },
+  { name: "Excess (deficiency) of revenues over expenditures", fsType: "REVENUE" },
+  { name: "Other financing sources (uses)", fsType: "REVENUE" },
+  { name: "Net change in fund balances", fsType: "EQUITY" },
+];
+
+async function ensureDefaultTemplate(engagementId: string, statement: StatementType, name: string, defaults: DefaultLineItem[]) {
+  const existing = await db.statementTemplate.findFirst({
+    where: { engagementId, statement },
+    select: { id: true },
+  });
+  if (existing) return;
+
+  await db.statementTemplate.create({
+    data: {
+      engagementId,
+      statement,
+      name,
+      lineItems: {
+        create: defaults.map((li, idx) => ({
+          name: li.name,
+          fsType: li.fsType,
+          order: idx,
+        })),
+      },
+    },
+  });
 }
 
 export async function ensureDefaultGovernmentalTemplates(engagementId: string) {
   const org = await ensureDefaultOrg();
   await assertEngagement(org.id, engagementId);
 
-  const existing = await db.statementTemplate.findFirst({
-    where: { engagementId, type: "GOV_FUNDS_BALANCE_SHEET" },
-    select: { id: true },
-  });
-  if (existing) return;
+  await ensureDefaultTemplate(
+    engagementId,
+    "GOVERNMENTAL_FUNDS_BS",
+    "Governmental Funds Balance Sheet (Default)",
+    GOV_FUNDS_BS_DEFAULTS
+  );
 
-  await db.$transaction(async (tx) => {
-    const bs = await tx.statementTemplate.create({
-      data: {
-        engagementId,
-        type: "GOV_FUNDS_BALANCE_SHEET",
-        name: "Governmental Funds Balance Sheet (Default)",
-        lineItems: {
-          create: [
-            { order: 10, code: "CASH", label: "Cash and cash equivalents", category: "ASSET" },
-            { order: 20, code: "INVEST", label: "Investments", category: "ASSET" },
-            { order: 30, code: "REC", label: "Receivables", category: "ASSET" },
-            { order: 40, code: "DUEFROM", label: "Due from other funds", category: "ASSET" },
-            { order: 50, code: "PREPAID", label: "Prepaids", category: "ASSET" },
-            { order: 60, code: "OTHERASSET", label: "Other assets", category: "ASSET" },
-
-            { order: 110, code: "AP", label: "Accounts payable", category: "LIABILITY" },
-            { order: 120, code: "ACCRUED", label: "Accrued liabilities", category: "LIABILITY" },
-            { order: 130, code: "DUE2", label: "Due to other funds", category: "LIABILITY" },
-            { order: 140, code: "DEFERREDIN", label: "Deferred inflows of resources", category: "LIABILITY" },
-            { order: 150, code: "OTHERLIAB", label: "Other liabilities", category: "LIABILITY" },
-
-            { order: 210, code: "FUND_BAL", label: "Fund balance", category: "EQUITY" },
-          ],
-        },
-      },
-    });
-
-    await tx.statementTemplate.create({
-      data: {
-        engagementId,
-        type: "GOV_FUNDS_REVENUES_EXPENDITURES_CHANGES",
-        name: "Statement of Revenues, Expenditures, and Changes in Fund Balances (Default)",
-        lineItems: {
-          create: [
-            { order: 10, code: "TAX", label: "Taxes", category: "REVENUE" },
-            { order: 20, code: "INTERGOV", label: "Intergovernmental", category: "REVENUE" },
-            { order: 30, code: "CHARGES", label: "Charges for services", category: "REVENUE" },
-            { order: 40, code: "FINE", label: "Fines and forfeitures", category: "REVENUE" },
-            { order: 50, code: "INVREV", label: "Investment earnings", category: "REVENUE" },
-            { order: 60, code: "OTHERREV", label: "Other revenues", category: "REVENUE" },
-
-            { order: 110, code: "GEN", label: "General government", category: "EXPENSE" },
-            { order: 120, code: "PUBLICSAF", label: "Public safety", category: "EXPENSE" },
-            { order: 130, code: "PUBLICWRK", label: "Public works", category: "EXPENSE" },
-            { order: 140, code: "HEALTH", label: "Health and welfare", category: "EXPENSE" },
-            { order: 150, code: "DEBTSVC", label: "Debt service", category: "EXPENSE" },
-            { order: 160, code: "CAPITAL", label: "Capital outlay", category: "EXPENSE" },
-            { order: 170, code: "OTHEREXP", label: "Other expenditures", category: "EXPENSE" },
-
-            { order: 210, code: "TRANS", label: "Other financing sources/uses", category: "OTHER" },
-          ],
-        },
-      },
-    });
-
-    // silence TS unused
-    void bs;
-  });
-}
-
-export async function getLatestImportedTBForStatements(engagementId: string) {
-  const org = await ensureDefaultOrg();
-  await assertEngagement(org.id, engagementId);
-  return db.trialBalanceImport.findFirst({
-    where: { engagementId, status: "IMPORTED" },
-    orderBy: { createdAt: "desc" },
-  });
+  await ensureDefaultTemplate(
+    engagementId,
+    "GOVERNMENTAL_FUNDS_IS",
+    "Statement of Revenues, Expenditures, and Changes in Fund Balances (Default)",
+    GOV_FUNDS_IS_DEFAULTS
+  );
 }
 
 export async function getGovernmentalStatementOverview(engagementId: string) {
@@ -97,168 +100,43 @@ export async function getGovernmentalStatementOverview(engagementId: string) {
   await assertEngagement(org.id, engagementId);
 
   await ensureDefaultGovernmentalTemplates(engagementId);
-  const imp = await getLatestImportedTBForStatements(engagementId);
 
-  const [templates, funds] = await Promise.all([
-    db.statementTemplate.findMany({
-      where: { engagementId, type: { in: ["GOV_FUNDS_BALANCE_SHEET", "GOV_FUNDS_REVENUES_EXPENDITURES_CHANGES"] } },
-      orderBy: { createdAt: "asc" },
-      select: { id: true, type: true, name: true },
+  const latestTB = await db.trialBalanceImport.findFirst({
+    where: { engagementId, status: "IMPORTED" },
+    orderBy: { createdAt: "desc" },
+    select: { id: true },
+  });
+
+  const [fundCount, templateCount] = await Promise.all([
+    db.fund.count({ where: { engagementId } }),
+    db.statementTemplate.count({
+      where: { engagementId, statement: { in: ["GOVERNMENTAL_FUNDS_BS", "GOVERNMENTAL_FUNDS_IS"] } },
     }),
-    db.fund.findMany({ where: { engagementId }, orderBy: { fundCode: "asc" }, select: { fundCode: true, name: true } }),
   ]);
 
   return {
-    importId: imp?.id ?? null,
-    templates,
-    funds,
+    hasImportedTB: !!latestTB,
+    fundCount,
+    templateCount,
   };
 }
 
-export async function getGovernmentalBalanceSheetMatrix(engagementId: string) {
+export async function getGovernmentalTemplate(engagementId: string, key: StatementTemplateKey) {
   const org = await ensureDefaultOrg();
   await assertEngagement(org.id, engagementId);
   await ensureDefaultGovernmentalTemplates(engagementId);
 
-  const imp = await getLatestImportedTBForStatements(engagementId);
-  if (!imp) {
-    return { importId: null as string | null, funds: [], template: null as any, lineItems: [], matrix: [] as any[], unassignedCount: 0 };
-  }
+  const statement = keyToStatementType(key);
 
-  const template = await db.statementTemplate.findFirstOrThrow({
-    where: { engagementId, type: "GOV_FUNDS_BALANCE_SHEET" },
-    select: { id: true, name: true, type: true },
+  return db.statementTemplate.findFirstOrThrow({
+    where: { engagementId, statement },
+    include: { lineItems: { orderBy: { order: "asc" } } },
   });
-
-  const [lineItems, funds] = await Promise.all([
-    db.statementLineItem.findMany({
-      where: { templateId: template.id },
-      orderBy: { order: "asc" },
-      select: { id: true, code: true, label: true, category: true, order: true },
-    }),
-    db.fund.findMany({ where: { engagementId }, orderBy: { fundCode: "asc" }, select: { fundCode: true, name: true } }),
-  ]);
-
-  // sums per (lineItem, fund)
-  const assigned = await db.statementLineAssignment.findMany({
-    where: { engagementId, importId: imp.id },
-    select: { lineItemId: true, tbLineId: true, fundCode: true },
-  });
-
-  const tbLines = await db.trialBalanceLine.findMany({
-    where: { importId: imp.id },
-    select: { id: true, fundCode: true, finalBalance: true },
-  });
-
-  const balanceByTbLineId = new Map<string, number>();
-  for (const l of tbLines) balanceByTbLineId.set(l.id, Number(l.finalBalance));
-
-  const sums = new Map<string, number>();
-  for (const a of assigned) {
-    const fundCode = a.fundCode ?? "";
-    const key = `${a.lineItemId}::${fundCode}`;
-    sums.set(key, (sums.get(key) ?? 0) + (balanceByTbLineId.get(a.tbLineId) ?? 0));
-  }
-
-  const assignedTbLineIds = new Set(assigned.map((a) => a.tbLineId));
-  const unassignedCount = tbLines.filter((l) => !!l.fundCode).filter((l) => !assignedTbLineIds.has(l.id)).length;
-
-  // matrix: rows = lineItems, cols = funds
-  const matrix = lineItems.map((li) => {
-    const row: Record<string, any> = { lineItemId: li.id, code: li.code, label: li.label, category: li.category };
-    for (const f of funds) {
-      const key = `${li.id}::${f.fundCode}`;
-      row[f.fundCode] = sums.get(key) ?? 0;
-    }
-    row.total = funds.reduce((acc, f) => acc + (row[f.fundCode] ?? 0), 0);
-    return row;
-  });
-
-  return { importId: imp.id, funds, template, lineItems, matrix, unassignedCount };
 }
 
-export async function getFundTBForAssignment(engagementId: string, importId: string, fundCode: string) {
-  const org = await ensureDefaultOrg();
-  await assertEngagement(org.id, engagementId);
-
-  const lines = await db.trialBalanceLine.findMany({
-    where: { importId, fundCode },
-    orderBy: { account: "asc" },
-    select: { id: true, account: true, description: true, finalBalance: true },
-  });
-
-  const assigned = await db.statementLineAssignment.findMany({
-    where: { engagementId, importId, fundCode },
-    select: { tbLineId: true, lineItemId: true },
-  });
-
-  const assignedByTbLineId: Record<string, string> = {};
-  for (const a of assigned) assignedByTbLineId[a.tbLineId] = a.lineItemId;
-
-  return {
-    lines: lines.map((l) => ({ ...l, finalBalance: Number(l.finalBalance), assignedLineItemId: assignedByTbLineId[l.id] ?? null })),
-  };
-}
-
-const SetAssignments = z.object({
-  engagementId: z.string().min(1),
-  importId: z.string().min(1),
-  fundCode: z.string().min(1),
-  lineItemId: z.string().min(1),
-  checkedTbLineIds: z.array(z.string().min(1)),
-});
-
-export async function setLineItemAssignments(payload: {
-  engagementId: string;
-  importId: string;
-  fundCode: string;
-  lineItemId: string;
-  checkedTbLineIds: string[];
-}) {
-  const org = await ensureDefaultOrg();
-  const v = SetAssignments.parse(payload);
-  await assertEngagement(org.id, v.engagementId);
-
-  // All TB lines for this fund (in this import)
-  const fundLines = await db.trialBalanceLine.findMany({
-    where: { importId: v.importId, fundCode: v.fundCode },
-    select: { id: true },
-  });
-  const fundLineIds = fundLines.map((x) => x.id);
-
-  const checked = new Set(v.checkedTbLineIds);
-  const toRemove = fundLineIds.filter((id) => !checked.has(id));
-
-  await db.$transaction(async (tx) => {
-    // remove assignments on this line item for unchecked rows
-    if (toRemove.length) {
-      await tx.statementLineAssignment.deleteMany({
-        where: {
-          engagementId: v.engagementId,
-          importId: v.importId,
-          fundCode: v.fundCode,
-          lineItemId: v.lineItemId,
-          tbLineId: { in: toRemove },
-        },
-      });
-    }
-
-    // upsert checked assignments, removing any prior assignment for those tb lines
-    for (const tbLineId of v.checkedTbLineIds) {
-      await tx.statementLineAssignment.deleteMany({
-        where: { engagementId: v.engagementId, importId: v.importId, tbLineId },
-      });
-      await tx.statementLineAssignment.create({
-        data: {
-          engagementId: v.engagementId,
-          importId: v.importId,
-          tbLineId,
-          fundCode: v.fundCode,
-          lineItemId: v.lineItemId,
-        },
-      });
-    }
-  });
-
-  revalidatePath(`/dashboard/engagements/${v.engagementId}/statements/governmental/balance-sheet`);
+// Placeholder hook for when we start persisting statement-level assignments.
+// For now, just revalidate pages after any future changes.
+export async function revalidateStatements(engagementId: string) {
+  revalidatePath(`/dashboard/engagements/${engagementId}/statements`);
+  revalidatePath(`/dashboard/engagements/${engagementId}/statements/governmental`);
 }

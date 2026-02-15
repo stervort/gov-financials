@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/src/components/ui/card";
-import { Button } from "@/src/components/ui/button";
 import { getFundAssignmentCounts } from "@/src/server/actions/tb";
 import { getGovernmentalStatementOverview } from "@/src/server/actions/statements";
 
@@ -12,7 +11,7 @@ export default async function GovernmentalStatementsHome({ params }: { params: P
     getGovernmentalStatementOverview(params.engagementId),
   ]);
 
-  const canProceed = !!overview.importId && fundCounts.unassigned === 0;
+  const canProceed = overview.hasImportedTB && fundCounts.unassigned === 0;
 
   return (
     <div className="space-y-6">
@@ -22,7 +21,7 @@ export default async function GovernmentalStatementsHome({ params }: { params: P
         </CardHeader>
         <CardContent className="space-y-2 text-sm text-gray-700">
           <div>
-            Latest imported TB: <span className="font-medium">{overview.importId ? "Yes" : "No"}</span>
+            Latest imported TB: <span className="font-medium">{overview.hasImportedTB ? "Yes" : "No"}</span>
           </div>
           <div>
             Fund codes assigned: <span className="font-medium">{fundCounts.assigned}</span> / {fundCounts.total}
@@ -32,7 +31,6 @@ export default async function GovernmentalStatementsHome({ params }: { params: P
               <span className="ml-2 text-green-700">(all set)</span>
             )}
           </div>
-
           {!canProceed && (
             <div className="text-xs text-gray-600">
               Finish Fund Setup first (every TB line needs a Fund Code) before building statements.
@@ -45,22 +43,28 @@ export default async function GovernmentalStatementsHome({ params }: { params: P
         <CardHeader>
           <CardTitle>Available statements</CardTitle>
         </CardHeader>
-
         <CardContent className="space-y-3">
           <div className="flex flex-wrap gap-2">
-            {canProceed ? (
-              <Link href={`/dashboard/engagements/${params.engagementId}/statements/governmental/balance-sheet`}>
-                <Button>Balance Sheet (Governmental Funds)</Button>
-              </Link>
-            ) : (
-              <Button disabled>Balance Sheet (Governmental Funds)</Button>
-            )}
+            <Link
+              href={`/dashboard/engagements/${params.engagementId}/statements/governmental/balance-sheet`}
+              aria-disabled={!canProceed}
+              className={`inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-colors border ${
+                canProceed ? "bg-black text-white hover:bg-black/90" : "bg-gray-200 text-gray-500 cursor-not-allowed"
+              }`}
+              onClick={(e) => {
+                if (!canProceed) e.preventDefault();
+              }}
+            >
+              Balance Sheet (Governmental Funds)
+            </Link>
 
-            <Button disabled>Revenues, Expenditures & Changes (coming next)</Button>
+            <span className="inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium border bg-gray-200 text-gray-500 cursor-not-allowed">
+              Revenues, Expenditures &amp; Changes (coming next)
+            </span>
           </div>
 
           <div className="pt-2 text-xs text-gray-600">
-            Templates loaded: {overview.templates.length}. Funds: {overview.funds.length}.
+            Templates loaded: {overview.templateCount}. Funds: {overview.fundCount}.
           </div>
         </CardContent>
       </Card>
