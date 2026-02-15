@@ -189,3 +189,232 @@ export async function upsertStatementLineItem(payload: z.infer<typeof UpsertLine
   revalidatePath(`/dashboard/engagements/${v.engagementId}/statements`);
   revalidatePath(`/dashboard/engagements/${v.engagementId}/statements/governmental`);
 }
+
+// =========================
+// Balance Sheet Builder
+// =========================
+
+export type StatementLineItemRow = {
+  id: string;
+  sortOrder: number;
+  label: string;
+  accountType: AccountType;
+};
+
+export type FundRow = {
+  fundCode: string;
+  name: string | null;
+  isMajor: boolean;
+};
+
+export type BalanceSheetBuilderData = {
+  importId: string;
+  templateId: string;
+  lineItems: StatementLineItemRow[];
+  funds: FundRow[];
+  // sums[lineItemId][fundCode] = number
+  sums: Record<string, Record<string, number>>;
+};
+
+export async function getGovernmentalBalanceSheetBuilderData(
+  engagementId: string
+): Promise<BalanceSheetBuilderData | null> {
+  const org = await ensureDefaultOrg();
+  await assertEngagement(org.id, engagementId);
+
+  // Ensure defaults exist
+  await ensureDefaultGovFundTemplates(engagementId);
+
+  const latestImport = await db.trialBalanceImport.findFirst({
+    where: { engagementId, status: "IMPORTED" },
+    orderBy: { createdAt: "desc" },
+    select: { id: true },
+  });
+  if (!latestImport) return null;
+
+  const template = await db.statementTemplate.findFirstOrThrow({
+    where: { engagementId, statement: StatementType.GOVERNMENTAL_FUNDS_BS },
+    select: { id: true },
+  });
+
+  const [lineItems, funds, assignments] = await Promise.all([
+    db.statementLineItem.findMany({
+      where: { templateId: template.id },
+      orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
+      select: { id: true, sortOrder: true, label: true, accountType: true },
+    }),
+    db.fund.findMany({
+      where: { engagementId, fundType: "GOVERNMENTAL" },
+      orderBy: [{ isMajor: "desc" }, { fundCode: "asc" }],
+      select: { fundCode: true, name: true, isMajor: true },
+    }),
+    db.statementLineAssignment.findMany({
+      where: { engagementId, importId: latestImport.id },
+      select: {
+        lineItemId: true,
+        fundCode: true,
+        tbLine: { select: { finalBalance: true } },
+      },
+    }),
+  ]);
+
+  const sums: Record<string, Record<string, number>> = {};
+  for (const li of lineItems) sums[li.id] = {};
+
+  for (const a of assignments) {
+    const fundCode = a.fundCode ?? "";
+    if (!fundCode) continue;
+    const n = Number(a.tbLine.finalBalance);
+    sums[a.lineItemId] ??= {};
+    sums[a.lineItemId][fundCode] = (sums[a.lineItemId][fundCode] ?? 0) + n;
+  }
+
+  return {
+    importId: latestImport.id,
+    templateId: template.id,
+    lineItems,
+    funds,
+    sums,
+  };
+}
+
+export type FundCellLine = {
+  tbLineId: string;
+  account: string;
+  description: string | null;
+  finalBalance: number;
+  originalAuditGroup: string | null;
+  originalAuditSubgroup: string | null;
+  auditGroup: string | null;
+  auditSubgroup: string | null;
+  assignedLineItemId: string | null;
+};
+
+export type FundCellDetails = {
+  fundCode: string;
+  lineItemId: string;
+  included: FundCellLine[];
+  others: FundCellLine[];
+};
+
+export async function getFundCellDetails(args: {
+  engagementId: string;
+  importId: string;
+  fundCode: string;
+  lineItemId: string;
+}): Promise<FundCellDetails> {
+  const org = await ensureDefaultOrg();
+  await assertEngagement(org.id, args.engagementId);
+
+  const lines = await db.trialBalanceLine.findMany({
+    where: { importId: args.importId, fundCode: args.fundCode },
+    orderBy: [{ account: "asc" }],
+    select: {
+      id: true,
+      account: true,
+      description: true,
+      finalBalance: true,
+      auditGroup: true,
+      auditSubgroup: true,
+      originalAuditGroup: true,
+      originalAuditSubgroup: true,
+      statementAssignments: {
+        where: { importId: args.importId },
+        select: { lineItemId: true },
+        take: 1,
+      },
+    },
+  });
+
+  const mapped: FundCellLine[] = lines.map((l) => ({
+    tbLineId: l.id,
+    account: l.account,
+    description: l.description,
+    finalBalance: Number(l.finalBalance),
+    originalAuditGroup: l.originalAuditGroup ?? null,
+    originalAuditSubgroup: l.originalAuditSubgroup ?? null,
+    auditGroup: l.auditGroup ?? null,
+    auditSubgroup: l.auditSubgroup ?? null,
+    assignedLineItemId: l.statementAssignments?.[0]?.lineItemId ?? null,
+  }));
+
+  return {
+    fundCode: args.fundCode,
+    lineItemId: args.lineItemId,
+    included: mapped.filter((x) => x.assignedLineItemId === args.lineItemId),
+    others: mapped.filter((x) => x.assignedLineItemId !== args.lineItemId),
+  };
+}
+
+const SaveCellSchema = z.object({
+  engagementId: z.string().min(1),
+  importId: z.string().min(1),
+  fundCode: z.string().min(1),
+  lineItemId: z.string().min(1),
+  selectedTbLineIds: z.array(z.string().min(1)),
+});
+
+export async function saveFundCellAssignments(payload: {
+  engagementId: string;
+  importId: string;
+  fundCode: string;
+  lineItemId: string;
+  selectedTbLineIds: string[];
+}) {
+  const org = await ensureDefaultOrg();
+  const v = SaveCellSchema.parse(payload);
+  await assertEngagement(org.id, v.engagementId);
+
+  const existingInCell = await db.statementLineAssignment.findMany({
+    where: {
+      engagementId: v.engagementId,
+      importId: v.importId,
+      fundCode: v.fundCode,
+      lineItemId: v.lineItemId,
+    },
+    select: { id: true, tbLineId: true },
+  });
+
+  const existingSet = new Set(existingInCell.map((x) => x.tbLineId));
+  const desiredSet = new Set(v.selectedTbLineIds);
+
+  const toDeleteIds = existingInCell.filter((x) => !desiredSet.has(x.tbLineId)).map((x) => x.id);
+  const toUpsertTbLineIds = v.selectedTbLineIds.filter((id) => !existingSet.has(id));
+
+  await db.$transaction(async (tx) => {
+    if (toDeleteIds.length) {
+      await tx.statementLineAssignment.deleteMany({ where: { id: { in: toDeleteIds } } });
+    }
+
+    for (const tbLineId of toUpsertTbLineIds) {
+      const existing = await tx.statementLineAssignment.findUnique({
+        where: { importId_tbLineId: { importId: v.importId, tbLineId } },
+        select: { id: true },
+      });
+
+      if (existing) {
+        await tx.statementLineAssignment.update({
+          where: { id: existing.id },
+          data: {
+            engagementId: v.engagementId,
+            importId: v.importId,
+            fundCode: v.fundCode,
+            lineItemId: v.lineItemId,
+          },
+        });
+      } else {
+        await tx.statementLineAssignment.create({
+          data: {
+            engagementId: v.engagementId,
+            importId: v.importId,
+            tbLineId,
+            fundCode: v.fundCode,
+            lineItemId: v.lineItemId,
+          },
+        });
+      }
+    }
+  });
+
+  revalidatePath(`/dashboard/engagements/${v.engagementId}/statements/governmental/balance-sheet`);
+}

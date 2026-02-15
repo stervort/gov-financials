@@ -2,14 +2,21 @@ export const dynamic = "force-dynamic";
 
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/src/components/ui/card";
-import { getLatestImportedTB } from "@/src/server/actions/groupings";
+import { getFundAssignmentCounts } from "@/src/server/actions/tb";
+import {
+  getGovernmentalBalanceSheetBuilderData,
+  getFundCellDetails,
+  saveFundCellAssignments,
+} from "@/src/server/actions/statements";
+import { BalanceSheetBuilderClient } from "./builder-client";
 
 type Params = { engagementId: string };
 
 export default async function GovBalanceSheetPage({ params }: { params: Params }) {
-  const imp = await getLatestImportedTB(params.engagementId);
+  const fundCounts = await getFundAssignmentCounts(params.engagementId);
+  const data = await getGovernmentalBalanceSheetBuilderData(params.engagementId);
 
-  if (!imp) {
+  if (!data) {
     return (
       <div className="space-y-6">
         <h1 className="text-2xl font-semibold">Governmental Funds — Balance Sheet</h1>
@@ -33,7 +40,6 @@ export default async function GovBalanceSheetPage({ params }: { params: Params }
     );
   }
 
-  // Placeholder UI for now — next step is the actual statement builder.
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -52,12 +58,29 @@ export default async function GovBalanceSheetPage({ params }: { params: Params }
           <CardTitle>Imported trial balance</CardTitle>
         </CardHeader>
         <CardContent className="text-sm text-gray-700">
-          Using latest import: <span className="font-medium">{imp.id}</span>
-          <div className="mt-2 text-gray-500">
-            Next: we’ll build the statement line-item template + assignment UI.
-          </div>
+          Using latest import: <span className="font-medium">{data.importId}</span>
         </CardContent>
       </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Fund readiness</CardTitle>
+        </CardHeader>
+        <CardContent className="text-sm text-gray-700">
+          Funds assigned: {fundCounts.assigned} / {fundCounts.total} trial balance lines
+        </CardContent>
+      </Card>
+
+      <BalanceSheetBuilderClient
+        engagementId={params.engagementId}
+        importId={data.importId}
+        templateId={data.templateId}
+        lineItems={data.lineItems}
+        funds={data.funds}
+        sums={data.sums}
+        loadCellDetails={getFundCellDetails}
+        saveCell={saveFundCellAssignments}
+      />
     </div>
   );
 }

@@ -1,205 +1,258 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import { Button } from "@/src/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/src/components/ui/card";
+import { Button } from "@/src/components/ui/button";
 
-type Fund = { fundCode: string; name: string | null };
-type LineItem = { id: string; code: string; label: string; category: string; order: number };
+import type {
+  FundRow,
+  FundCellDetails,
+  StatementLineItemRow,
+} from "@/src/server/actions/statements";
 
-type FundTBLine = {
-  id: string;
-  account: string;
-  description: string | null;
-  finalBalance: number;
-  assignedLineItemId: string | null;
-};
+function formatNumber(n: number) {
+  if (!n) return "";
+  const abs = Math.abs(n);
+  const s = abs.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return n < 0 ? `(${s})` : s;
+}
 
-type Props = {
+export function BalanceSheetBuilderClient(props: {
   engagementId: string;
   importId: string;
-  funds: Fund[];
-  lineItems: LineItem[];
-  matrix: any[];
-  loadFundTB: (engagementId: string, importId: string, fundCode: string) => Promise<{ lines: FundTBLine[] }>;
-  saveAssignments: (payload: {
+  templateId: string;
+  lineItems: StatementLineItemRow[];
+  funds: FundRow[];
+  sums: Record<string, Record<string, number>>;
+  loadCellDetails: (args: {
     engagementId: string;
     importId: string;
     fundCode: string;
     lineItemId: string;
-    checkedTbLineIds: string[];
+  }) => Promise<FundCellDetails>;
+  saveCell: (payload: {
+    engagementId: string;
+    importId: string;
+    fundCode: string;
+    lineItemId: string;
+    selectedTbLineIds: string[];
   }) => Promise<void>;
-};
-
-function fmt(n: number) {
-  const sign = n < 0 ? "-" : "";
-  const abs = Math.abs(n);
-  return `${sign}$${abs.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
-}
-
-export default function BalanceSheetBuilderClient(props: Props) {
+}) {
   const [open, setOpen] = useState<null | { fundCode: string; lineItemId: string }>(null);
-  const [fundTbLines, setFundTbLines] = useState<FundTBLine[] | null>(null);
-  const [saving, startSaving] = useTransition();
-  const [loading, setLoading] = useState(false);
-  const [checked, setChecked] = useState<Record<string, boolean>>({});
+  const [details, setDetails] = useState<FundCellDetails | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [isPending, startTransition] = useTransition();
+  const [isLoading, setIsLoading] = useState(false);
 
-  const openLabel = useMemo(() => {
-    if (!open) return "";
-    const fund = props.funds.find((f) => f.fundCode === open.fundCode);
-    const li = props.lineItems.find((x) => x.id === open.lineItemId);
-    return `${fund?.fundCode ?? open.fundCode} - ${fund?.name ?? ""} • ${li?.label ?? ""}`;
-  }, [open, props.funds, props.lineItems]);
+  const fundIndex = useMemo(() => {
+    const m: Record<string, FundRow> = {};
+    for (const f of props.funds) m[f.fundCode] = f;
+    return m;
+  }, [props.funds]);
 
-  async function handleOpen(fundCode: string, lineItemId: string) {
+  async function openCell(fundCode: string, lineItemId: string) {
     setOpen({ fundCode, lineItemId });
-    setLoading(true);
+    setIsLoading(true);
     try {
-      const res = await props.loadFundTB(props.engagementId, props.importId, fundCode);
-      setFundTbLines(res.lines);
-      const next: Record<string, boolean> = {};
-      for (const l of res.lines) {
-        next[l.id] = l.assignedLineItemId === lineItemId;
-      }
-      setChecked(next);
+      const d = await props.loadCellDetails({
+        engagementId: props.engagementId,
+        importId: props.importId,
+        fundCode,
+        lineItemId,
+      });
+      setDetails(d);
+      setSelected(new Set(d.included.map((x) => x.tbLineId)));
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
-  }
-
-  function toggle(id: string) {
-    setChecked((p) => ({ ...p, [id]: !p[id] }));
   }
 
   function close() {
     setOpen(null);
-    setFundTbLines(null);
-    setChecked({});
+    setDetails(null);
+    setSelected(new Set());
+  }
+
+  function toggle(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   }
 
   function save() {
     if (!open) return;
-    const checkedIds = Object.entries(checked)
-      .filter(([, v]) => v)
-      .map(([id]) => id);
-    startSaving(async () => {
-      await props.saveAssignments({
+    const selectedTbLineIds = Array.from(selected);
+    startTransition(async () => {
+      await props.saveCell({
         engagementId: props.engagementId,
         importId: props.importId,
         fundCode: open.fundCode,
         lineItemId: open.lineItemId,
-        checkedTbLineIds: checkedIds,
+        selectedTbLineIds,
       });
-      close();
+      // Refresh modal lists after save so "moved" lines show correctly
+      const d = await props.loadCellDetails({
+        engagementId: props.engagementId,
+        importId: props.importId,
+        fundCode: open.fundCode,
+        lineItemId: open.lineItemId,
+      });
+      setDetails(d);
+      setSelected(new Set(d.included.map((x) => x.tbLineId)));
     });
   }
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-sm">Balance sheet matrix</CardTitle>
+        <CardTitle>Builder</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent>
+        <div className="text-sm text-gray-600 mb-3">
+          Click a fund/line-item cell to assign trial balance accounts. The top list is what makes up that line item.
+          The bottom list is the rest of the fund’s trial balance (including items already assigned elsewhere).
+        </div>
+
         <div className="overflow-auto border rounded">
           <table className="min-w-[900px] w-full text-sm">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="text-left p-2 border-b">Line item</th>
+            <thead className="sticky top-0 bg-white">
+              <tr className="border-b">
+                <th className="text-left p-2 w-[360px]">Line item</th>
                 {props.funds.map((f) => (
-                  <th key={f.fundCode} className="text-right p-2 border-b whitespace-nowrap">
-                    {f.fundCode} {f.name ? `- ${f.name}` : ""}
+                  <th key={f.fundCode} className="text-right p-2 whitespace-nowrap">
+                    <div className="font-medium">{f.fundCode}</div>
+                    <div className="text-[11px] text-gray-500">{f.name ?? ""}</div>
                   </th>
                 ))}
-                <th className="text-right p-2 border-b">Total</th>
               </tr>
             </thead>
             <tbody>
-              {props.matrix.map((row: any) => (
-                <tr key={row.lineItemId} className="hover:bg-gray-50">
-                  <td className="p-2 border-b">
-                    <div className="font-medium">{row.label}</div>
-                    <div className="text-xs text-gray-500">{row.category}</div>
+              {props.lineItems.map((li) => (
+                <tr key={li.id} className="border-b last:border-b-0">
+                  <td className="p-2 align-top">
+                    <div className="font-medium">{li.label}</div>
+                    <div className="text-[11px] text-gray-500">{li.accountType}</div>
                   </td>
-                  {props.funds.map((f) => (
-                    <td key={f.fundCode} className="p-2 border-b text-right">
-                      <button
-                        type="button"
-                        className="underline underline-offset-2"
-                        onClick={() => handleOpen(f.fundCode, row.lineItemId)}
-                        title="Click to assign accounts"
-                      >
-                        {fmt(Number(row[f.fundCode] ?? 0))}
-                      </button>
-                    </td>
-                  ))}
-                  <td className="p-2 border-b text-right font-medium">{fmt(Number(row.total ?? 0))}</td>
+                  {props.funds.map((f) => {
+                    const v = props.sums?.[li.id]?.[f.fundCode] ?? 0;
+                    return (
+                      <td key={f.fundCode} className="p-2 text-right align-top">
+                        <button
+                          type="button"
+                          className="w-full rounded border px-2 py-1 hover:bg-gray-50 disabled:opacity-50"
+                          onClick={() => openCell(f.fundCode, li.id)}
+                        >
+                          {formatNumber(v)}
+                        </button>
+                      </td>
+                    );
+                  })}
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
 
-        {open && (
-          <div className="fixed inset-0 bg-black/30 flex items-center justify-center p-4">
-            <div className="bg-white rounded shadow-lg w-full max-w-3xl max-h-[85vh] overflow-hidden">
-              <div className="p-4 border-b flex items-start justify-between gap-4">
+        {open ? (
+          <div className="fixed inset-0 bg-black/30 flex items-center justify-center p-4 z-50">
+            <div className="bg-white w-full max-w-5xl rounded shadow-lg border">
+              <div className="p-4 border-b flex items-center justify-between">
                 <div>
-                  <div className="font-semibold">Assign accounts</div>
-                  <div className="text-xs text-gray-600">{openLabel}</div>
+                  <div className="text-sm text-gray-500">Assign accounts</div>
+                  <div className="font-semibold">
+                    Fund {open.fundCode} — {fundIndex[open.fundCode]?.name ?? ""}
+                  </div>
                 </div>
                 <div className="flex gap-2">
-                  <Button variant="ghost" onClick={close} disabled={saving}>
-                    Cancel
+                  <Button onClick={save} disabled={isPending || isLoading}>
+                    {isPending ? "Saving…" : "Save"}
                   </Button>
-                  <Button onClick={save} disabled={saving || loading}>
-                    {saving ? "Saving…" : "Save"}
+                  <Button variant="secondary" onClick={close} disabled={isPending}>
+                    Close
                   </Button>
                 </div>
               </div>
-              <div className="p-4 overflow-auto max-h-[70vh]">
-                {loading || !fundTbLines ? (
-                  <div className="text-sm text-gray-700">Loading fund trial balance…</div>
-                ) : fundTbLines.length === 0 ? (
-                  <div className="text-sm text-gray-700">No TB lines found for this fund.</div>
-                ) : (
-                  <div className="space-y-2">
-                    <div className="text-xs text-gray-600">
-                      Tip: checked lines will be moved to this line item. If a line was previously assigned to a different line item, it will be removed from the old one.
-                    </div>
-                    <div className="overflow-auto border rounded">
-                      <table className="w-full text-sm">
-                        <thead className="bg-gray-50">
-                          <tr>
-                            <th className="p-2 text-left border-b w-10"> </th>
-                            <th className="p-2 text-left border-b">Account</th>
-                            <th className="p-2 text-left border-b">Description</th>
-                            <th className="p-2 text-right border-b">Amount</th>
-                            <th className="p-2 text-left border-b">Currently grouped</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {fundTbLines.map((l) => (
-                            <tr key={l.id} className={l.assignedLineItemId && l.assignedLineItemId !== open.lineItemId ? "bg-yellow-50" : ""}>
-                              <td className="p-2 border-b">
-                                <input type="checkbox" checked={!!checked[l.id]} onChange={() => toggle(l.id)} />
-                              </td>
-                              <td className="p-2 border-b font-mono">{l.account}</td>
-                              <td className="p-2 border-b">{l.description ?? ""}</td>
-                              <td className="p-2 border-b text-right">{fmt(l.finalBalance)}</td>
-                              <td className="p-2 border-b text-xs text-gray-700">
-                                {l.assignedLineItemId ? (l.assignedLineItemId === open.lineItemId ? "This line" : "Other line") : "Unassigned"}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+
+              <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="border rounded">
+                  <div className="p-3 border-b bg-gray-50 font-medium">Included in this line item</div>
+                  <div className="max-h-[420px] overflow-auto">
+                    {isLoading || !details ? (
+                      <div className="p-3 text-sm text-gray-600">Loading…</div>
+                    ) : details.included.length === 0 ? (
+                      <div className="p-3 text-sm text-gray-600">None yet.</div>
+                    ) : (
+                      <ul className="divide-y">
+                        {details.included.map((l) => (
+                          <li key={l.tbLineId} className="p-2 flex items-start gap-2">
+                            <input
+                              type="checkbox"
+                              checked={selected.has(l.tbLineId)}
+                              onChange={() => toggle(l.tbLineId)}
+                            />
+                            <div className="flex-1">
+                              <div className="flex justify-between gap-3">
+                                <div className="font-mono text-xs">{l.account}</div>
+                                <div className="font-mono text-xs">{formatNumber(l.finalBalance)}</div>
+                              </div>
+                              <div className="text-xs text-gray-600">{l.description ?? ""}</div>
+                              <div className="text-[11px] text-gray-500">
+                                Uploaded: {l.originalAuditGroup ?? ""}{l.originalAuditSubgroup ? ` / ${l.originalAuditSubgroup}` : ""}
+                                {" • "}Current: {l.auditGroup ?? ""}{l.auditSubgroup ? ` / ${l.auditSubgroup}` : ""}
+                              </div>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
-                )}
+                </div>
+
+                <div className="border rounded">
+                  <div className="p-3 border-b bg-gray-50 font-medium">Other trial balance lines for this fund</div>
+                  <div className="max-h-[420px] overflow-auto">
+                    {isLoading || !details ? (
+                      <div className="p-3 text-sm text-gray-600">Loading…</div>
+                    ) : details.others.length === 0 ? (
+                      <div className="p-3 text-sm text-gray-600">No other lines found.</div>
+                    ) : (
+                      <ul className="divide-y">
+                        {details.others.map((l) => (
+                          <li key={l.tbLineId} className="p-2 flex items-start gap-2">
+                            <input
+                              type="checkbox"
+                              checked={selected.has(l.tbLineId)}
+                              onChange={() => toggle(l.tbLineId)}
+                            />
+                            <div className="flex-1">
+                              <div className="flex justify-between gap-3">
+                                <div className="font-mono text-xs">{l.account}</div>
+                                <div className="font-mono text-xs">{formatNumber(l.finalBalance)}</div>
+                              </div>
+                              <div className="text-xs text-gray-600">{l.description ?? ""}</div>
+                              <div className="text-[11px] text-gray-500">
+                                Assigned to: {l.assignedLineItemId ? "another line" : "(unassigned)"}
+                                {" • "}Uploaded: {l.originalAuditGroup ?? ""}{l.originalAuditSubgroup ? ` / ${l.originalAuditSubgroup}` : ""}
+                              </div>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-4 border-t text-xs text-gray-600">
+                Tip: checking a box in “Other” will move that account into this line item when you Save (it will be removed from
+                the line item it was previously assigned to).
               </div>
             </div>
           </div>
-        )}
+        ) : null}
       </CardContent>
     </Card>
   );
