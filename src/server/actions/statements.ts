@@ -3,7 +3,7 @@
 import { db } from "@/src/lib/db";
 import { ensureDefaultOrg } from "@/src/server/security/tenant";
 import { revalidatePath } from "next/cache";
-import { FsType, StatementType } from "@prisma/client";
+import { AccountType, StatementType } from "@prisma/client";
 
 async function assertEngagement(orgId: string, engagementId: string) {
   return db.engagement.findFirstOrThrow({
@@ -12,131 +12,134 @@ async function assertEngagement(orgId: string, engagementId: string) {
   });
 }
 
-// UI-friendly aliases (keeps routes readable) -> Prisma enum values
-export type StatementTemplateKey = "GOV_FUNDS_BALANCE_SHEET" | "GOV_FUNDS_REVENUES_EXP_CHANGES";
-
-function keyToStatementType(key: StatementTemplateKey): StatementType {
-  switch (key) {
-    case "GOV_FUNDS_BALANCE_SHEET":
-      return "GOVERNMENTAL_FUNDS_BS";
-    case "GOV_FUNDS_REVENUES_EXP_CHANGES":
-      return "GOVERNMENTAL_FUNDS_IS";
-  }
-}
-
-type DefaultLineItem = { name: string; fsType: FsType };
-
-// Minimal default line items (illustrative ACFR-ish). Users can refine later.
-const GOV_FUNDS_BS_DEFAULTS: DefaultLineItem[] = [
-  { name: "Cash and pooled investments", fsType: "ASSET" },
-  { name: "Receivables", fsType: "ASSET" },
-  { name: "Due from other funds", fsType: "ASSET" },
-  { name: "Inventory", fsType: "ASSET" },
-  { name: "Prepaid items", fsType: "ASSET" },
-  { name: "Total assets", fsType: "ASSET" },
-
-  { name: "Accounts payable", fsType: "LIABILITY" },
-  { name: "Accrued liabilities", fsType: "LIABILITY" },
-  { name: "Due to other funds", fsType: "LIABILITY" },
-  { name: "Unearned revenue", fsType: "LIABILITY" },
-  { name: "Total liabilities", fsType: "LIABILITY" },
-
-  { name: "Fund balances", fsType: "EQUITY" },
-  { name: "Total liabilities and fund balances", fsType: "EQUITY" },
-];
-
-const GOV_FUNDS_IS_DEFAULTS: DefaultLineItem[] = [
-  { name: "Revenues", fsType: "REVENUE" },
-  { name: "Expenditures", fsType: "EXPENSE" },
-  { name: "Excess (deficiency) of revenues over expenditures", fsType: "REVENUE" },
-  { name: "Other financing sources (uses)", fsType: "REVENUE" },
-  { name: "Net change in fund balances", fsType: "EQUITY" },
-];
-
-async function ensureDefaultTemplate(engagementId: string, statement: StatementType, name: string, defaults: DefaultLineItem[]) {
-  const existing = await db.statementTemplate.findFirst({
-    where: { engagementId, statement },
-    select: { id: true },
-  });
-  if (existing) return;
-
-  await db.statementTemplate.create({
-    data: {
-      engagementId,
-      statement,
-      name,
-      lineItems: {
-        create: defaults.map((li, idx) => ({
-          name: li.name,
-          fsType: li.fsType,
-          order: idx,
-        })),
-      },
-    },
-  });
-}
-
-export async function ensureDefaultGovernmentalTemplates(engagementId: string) {
+// We need the latest imported TB as the “current” dataset for statements.
+export async function getLatestImportedTB(engagementId: string) {
   const org = await ensureDefaultOrg();
   await assertEngagement(org.id, engagementId);
 
-  await ensureDefaultTemplate(
-    engagementId,
-    "GOVERNMENTAL_FUNDS_BS",
-    "Governmental Funds Balance Sheet (Default)",
-    GOV_FUNDS_BS_DEFAULTS
-  );
-
-  await ensureDefaultTemplate(
-    engagementId,
-    "GOVERNMENTAL_FUNDS_IS",
-    "Statement of Revenues, Expenditures, and Changes in Fund Balances (Default)",
-    GOV_FUNDS_IS_DEFAULTS
-  );
-}
-
-export async function getGovernmentalStatementOverview(engagementId: string) {
-  const org = await ensureDefaultOrg();
-  await assertEngagement(org.id, engagementId);
-
-  await ensureDefaultGovernmentalTemplates(engagementId);
-
-  const latestTB = await db.trialBalanceImport.findFirst({
+  return db.trialBalanceImport.findFirst({
     where: { engagementId, status: "IMPORTED" },
     orderBy: { createdAt: "desc" },
+    select: { id: true, engagementId: true, createdAt: true },
+  });
+}
+
+/**
+ * Ensures a default illustrative template exists for Gov Funds:
+ * - Balance Sheet (GOVERNMENTAL_FUNDS_BS)
+ * - Statement of Revenues/Expenditures/Changes in Fund Balances (GOVERNMENTAL_FUNDS_IS)
+ *
+ * These are “starter” templates users can edit later.
+ */
+export async function ensureDefaultGovFundTemplates(engagementId: string) {
+  const org = await ensureDefaultOrg();
+  await assertEngagement(org.id, engagementId);
+
+  // 1) Gov Funds Balance Sheet
+  const existingBS = await db.statementTemplate.findFirst({
+    where: { engagementId, statement: StatementType.GOVERNMENTAL_FUNDS_BS },
     select: { id: true },
   });
 
-  const [fundCount, templateCount] = await Promise.all([
-    db.fund.count({ where: { engagementId } }),
-    db.statementTemplate.count({
-      where: { engagementId, statement: { in: ["GOVERNMENTAL_FUNDS_BS", "GOVERNMENTAL_FUNDS_IS"] } },
-    }),
-  ]);
+  if (!existingBS) {
+    await db.statementTemplate.create({
+      data: {
+        engagementId,
+        statement: StatementType.GOVERNMENTAL_FUNDS_BS,
+        name: "Default - Gov Funds Balance Sheet",
+        isDefault: true,
+        lineItems: {
+          create: [
+            // Assets
+            { sortOrder: 10, label: "Cash and investments", accountType: AccountType.ASSET },
+            { sortOrder: 20, label: "Receivables (net)", accountType: AccountType.ASSET },
+            { sortOrder: 30, label: "Due from other funds", accountType: AccountType.ASSET },
+            { sortOrder: 40, label: "Inventories and prepaid items", accountType: AccountType.ASSET },
+            { sortOrder: 90, label: "Total assets", accountType: AccountType.ASSET },
 
-  return {
-    hasImportedTB: !!latestTB,
-    fundCount,
-    templateCount,
-  };
-}
+            // Liabilities
+            { sortOrder: 110, label: "Accounts payable", accountType: AccountType.LIABILITY },
+            { sortOrder: 120, label: "Accrued liabilities", accountType: AccountType.LIABILITY },
+            { sortOrder: 130, label: "Due to other funds", accountType: AccountType.LIABILITY },
+            { sortOrder: 190, label: "Total liabilities", accountType: AccountType.LIABILITY },
 
-export async function getGovernmentalTemplate(engagementId: string, key: StatementTemplateKey) {
-  const org = await ensureDefaultOrg();
-  await assertEngagement(org.id, engagementId);
-  await ensureDefaultGovernmentalTemplates(engagementId);
+            // Fund balances
+            { sortOrder: 210, label: "Nonspendable", accountType: AccountType.EQUITY },
+            { sortOrder: 220, label: "Restricted", accountType: AccountType.EQUITY },
+            { sortOrder: 230, label: "Committed", accountType: AccountType.EQUITY },
+            { sortOrder: 240, label: "Assigned", accountType: AccountType.EQUITY },
+            { sortOrder: 250, label: "Unassigned", accountType: AccountType.EQUITY },
+            { sortOrder: 290, label: "Total fund balances", accountType: AccountType.EQUITY },
 
-  const statement = keyToStatementType(key);
+            { sortOrder: 999, label: "Total liabilities and fund balances", accountType: AccountType.OTHER },
+          ],
+        },
+      },
+      select: { id: true },
+    });
+  }
 
-  return db.statementTemplate.findFirstOrThrow({
-    where: { engagementId, statement },
-    include: { lineItems: { orderBy: { order: "asc" } } },
+  // 2) Gov Funds Operating Statement (Revenues/Expenditures/Changes)
+  const existingIS = await db.statementTemplate.findFirst({
+    where: { engagementId, statement: StatementType.GOVERNMENTAL_FUNDS_IS },
+    select: { id: true },
   });
+
+  if (!existingIS) {
+    await db.statementTemplate.create({
+      data: {
+        engagementId,
+        statement: StatementType.GOVERNMENTAL_FUNDS_IS,
+        name: "Default - Gov Funds Revenues/Expenditures/Changes",
+        isDefault: true,
+        lineItems: {
+          create: [
+            // Revenues
+            { sortOrder: 10, label: "Taxes", accountType: AccountType.REVENUE },
+            { sortOrder: 20, label: "Intergovernmental", accountType: AccountType.REVENUE },
+            { sortOrder: 30, label: "Charges for services", accountType: AccountType.REVENUE },
+            { sortOrder: 40, label: "Fines and forfeitures", accountType: AccountType.REVENUE },
+            { sortOrder: 50, label: "Investment earnings", accountType: AccountType.REVENUE },
+            { sortOrder: 90, label: "Total revenues", accountType: AccountType.REVENUE },
+
+            // Expenditures
+            { sortOrder: 110, label: "General government", accountType: AccountType.EXPENSE },
+            { sortOrder: 120, label: "Public safety", accountType: AccountType.EXPENSE },
+            { sortOrder: 130, label: "Public works", accountType: AccountType.EXPENSE },
+            { sortOrder: 140, label: "Culture and recreation", accountType: AccountType.EXPENSE },
+            { sortOrder: 150, label: "Community development", accountType: AccountType.EXPENSE },
+            { sortOrder: 160, label: "Debt service - principal", accountType: AccountType.EXPENSE },
+            { sortOrder: 170, label: "Debt service - interest and fiscal charges", accountType: AccountType.EXPENSE },
+            { sortOrder: 190, label: "Total expenditures", accountType: AccountType.EXPENSE },
+
+            { sortOrder: 210, label: "Excess (deficiency) of revenues over expenditures", accountType: AccountType.OTHER },
+
+            // Other financing sources (uses)
+            { sortOrder: 310, label: "Transfers in", accountType: AccountType.OTHER },
+            { sortOrder: 320, label: "Transfers out", accountType: AccountType.OTHER },
+            { sortOrder: 330, label: "Issuance of debt", accountType: AccountType.OTHER },
+            { sortOrder: 390, label: "Total other financing sources (uses)", accountType: AccountType.OTHER },
+
+            { sortOrder: 410, label: "Net change in fund balances", accountType: AccountType.OTHER },
+            { sortOrder: 510, label: "Fund balances - beginning of year", accountType: AccountType.EQUITY },
+            { sortOrder: 610, label: "Fund balances - end of year", accountType: AccountType.EQUITY },
+          ],
+        },
+      },
+      select: { id: true },
+    });
+  }
+
+  revalidatePath(`/dashboard/engagements/${engagementId}/statements`);
+  revalidatePath(`/dashboard/engagements/${engagementId}`);
 }
 
-// Placeholder hook for when we start persisting statement-level assignments.
-// For now, just revalidate pages after any future changes.
-export async function revalidateStatements(engagementId: string) {
-  revalidatePath(`/dashboard/engagements/${engagementId}/statements`);
-  revalidatePath(`/dashboard/engagements/${engagementId}/statements/governmental`);
+// Simple helper for UI routing
+export async function canProceedToStatements(engagementId: string) {
+  const latest = await getLatestImportedTB(engagementId);
+  if (!latest) return { ok: false as const, reason: "No imported trial balance found." };
+
+  // If you want later: enforce that all lines have fundCode before statements.
+  // For now, just return OK.
+  return { ok: true as const, importId: latest.id };
 }
