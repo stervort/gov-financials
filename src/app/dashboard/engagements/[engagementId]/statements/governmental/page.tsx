@@ -45,18 +45,18 @@ export default async function GovernmentalStatementsHome({ params }: { params: P
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex flex-wrap gap-2">
-            <Link
-              href={`/dashboard/engagements/${params.engagementId}/statements/governmental/balance-sheet`}
-              aria-disabled={!canProceed}
-              className={`inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-colors border ${
-                canProceed ? "bg-black text-white hover:bg-black/90" : "bg-gray-200 text-gray-500 cursor-not-allowed"
-              }`}
-              onClick={(e) => {
-                if (!canProceed) e.preventDefault();
-              }}
-            >
-              Balance Sheet (Governmental Funds)
-            </Link>
+            {canProceed ? (
+              <Link
+                href={`/dashboard/engagements/${params.engagementId}/statements/governmental/balance-sheet`}
+                className="inline-flex items-center justify-center rounded-md border bg-black px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-black/90"
+              >
+                Balance Sheet (Governmental Funds)
+              </Link>
+            ) : (
+              <span className="inline-flex items-center justify-center rounded-md border bg-gray-200 px-4 py-2 text-sm font-medium text-gray-500 cursor-not-allowed">
+                Balance Sheet (Governmental Funds)
+              </span>
+            )}
 
             <span className="inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium border bg-gray-200 text-gray-500 cursor-not-allowed">
               Revenues, Expenditures &amp; Changes (coming next)
