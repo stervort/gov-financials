@@ -1,70 +1,63 @@
+export const dynamic = "force-dynamic";
+
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/src/components/ui/card";
-import { Button } from "@/src/components/ui/button";
-import {
-  getGovernmentalBalanceSheetMatrix,
-  getFundTBForAssignment,
-  setLineItemAssignments,
-} from "@/src/server/actions/statements";
-import BalanceSheetBuilderClient from "./builder-client";
+import { getLatestImportedTB } from "@/src/server/actions/groupings";
 
 type Params = { engagementId: string };
 
-export default async function GovFundsBalanceSheetPage({ params }: { params: Params }) {
-  const data: any = await getGovernmentalBalanceSheetMatrix(params.engagementId);
+export default async function GovBalanceSheetPage({ params }: { params: Params }) {
+  const imp = await getLatestImportedTB(params.engagementId);
 
-  if (!data.importId) {
+  if (!imp) {
     return (
-      <Card>
-        <CardHeader>
-          <CardTitle>Governmental Funds Balance Sheet</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="text-sm text-gray-700">No imported trial balance found yet.</div>
-          <Button asChild>
-            <Link href={`/dashboard/engagements/${params.engagementId}`}>Back to engagement</Link>
-          </Button>
-        </CardContent>
-      </Card>
+      <div className="space-y-6">
+        <h1 className="text-2xl font-semibold">Governmental Funds — Balance Sheet</h1>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Get started</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="text-sm text-gray-700">No imported trial balance found yet.</div>
+
+            <Link
+              href={`/dashboard/engagements/${params.engagementId}`}
+              className="inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-medium bg-black text-white hover:bg-black/90"
+            >
+              Back to engagement
+            </Link>
+          </CardContent>
+        </Card>
+      </div>
     );
   }
 
+  // Placeholder UI for now — next step is the actual statement builder.
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div>
-          <div className="text-lg font-semibold">Governmental Funds Balance Sheet</div>
-          <div className="text-xs text-gray-600">Template: {data.template?.name}</div>
-        </div>
-        <div className="flex gap-2">
-          <Button asChild variant="ghost">
-            <Link href={`/dashboard/engagements/${params.engagementId}/statements/governmental`}>Back</Link>
-          </Button>
-          <Button asChild>
-            <Link href={`/dashboard/engagements/${params.engagementId}`}>Engagement</Link>
-          </Button>
-        </div>
+        <h1 className="text-2xl font-semibold">Governmental Funds — Balance Sheet</h1>
+
+        <Link
+          href={`/dashboard/engagements/${params.engagementId}`}
+          className="inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-medium bg-gray-100 text-gray-900 hover:bg-gray-200"
+        >
+          Back
+        </Link>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm">Assignment status</CardTitle>
+          <CardTitle>Imported trial balance</CardTitle>
         </CardHeader>
         <CardContent className="text-sm text-gray-700">
-          Unassigned fund TB lines: {data.unassignedCount}{" "}
-          {data.unassignedCount > 0 ? <span className="text-red-600">(needs grouping)</span> : <span className="text-green-700">(all assigned)</span>}
+          Using latest import: <span className="font-medium">{imp.id}</span>
+          <div className="mt-2 text-gray-500">
+            Next: we’ll build the statement line-item template + assignment UI.
+          </div>
         </CardContent>
       </Card>
-
-      <BalanceSheetBuilderClient
-        engagementId={params.engagementId}
-        importId={data.importId}
-        funds={data.funds}
-        lineItems={data.lineItems}
-        matrix={data.matrix}
-        loadFundTB={getFundTBForAssignment}
-        saveAssignments={setLineItemAssignments}
-      />
     </div>
   );
 }
