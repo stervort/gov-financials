@@ -15,53 +15,53 @@ async function assertEngagement(orgId: string, engagementId: string) {
 
 // --- Default templates (ACFR-ish starter set)
 // Keep this intentionally minimal; you can expand as you refine the statement builder UX.
-const GOV_BS_DEFAULT_LINES: Array<{ code: string; label: string; accountType: AccountType }> = [
-  { code: "ASSETS", label: "Assets", accountType: AccountType.ASSET },
-  { code: "CASH", label: "Cash and investments", accountType: AccountType.ASSET },
-  { code: "AR", label: "Receivables (net)", accountType: AccountType.ASSET },
-  { code: "DUE_FROM", label: "Due from other funds", accountType: AccountType.ASSET },
-  { code: "PREPAIDS", label: "Prepaid items", accountType: AccountType.ASSET },
-  { code: "TOTAL_ASSETS", label: "Total assets", accountType: AccountType.ASSET },
+const GOV_BS_DEFAULT_LINES: Array<{ label: string; accountType: AccountType }> = [
+  { label: "Assets", accountType: AccountType.ASSET },
+  { label: "Cash and investments", accountType: AccountType.ASSET },
+  { label: "Receivables (net)", accountType: AccountType.ASSET },
+  { label: "Due from other funds", accountType: AccountType.ASSET },
+  { label: "Prepaid items", accountType: AccountType.ASSET },
+  { label: "Total assets", accountType: AccountType.ASSET },
 
-  { code: "LIABS", label: "Liabilities", accountType: AccountType.LIABILITY },
-  { code: "AP", label: "Accounts payable", accountType: AccountType.LIABILITY },
-  { code: "ACCRUED", label: "Accrued liabilities", accountType: AccountType.LIABILITY },
-  { code: "DUE_TO", label: "Due to other funds", accountType: AccountType.LIABILITY },
-  { code: "DEFERRED_IN", label: "Deferred inflows of resources", accountType: AccountType.LIABILITY },
-  { code: "TOTAL_LIABS", label: "Total liabilities", accountType: AccountType.LIABILITY },
+  { label: "Liabilities", accountType: AccountType.LIABILITY },
+  { label: "Accounts payable", accountType: AccountType.LIABILITY },
+  { label: "Accrued liabilities", accountType: AccountType.LIABILITY },
+  { label: "Due to other funds", accountType: AccountType.LIABILITY },
+  { label: "Deferred inflows of resources", accountType: AccountType.LIABILITY },
+  { label: "Total liabilities", accountType: AccountType.LIABILITY },
 
-  { code: "FUND_BAL", label: "Fund balances", accountType: AccountType.EQUITY },
-  { code: "TOTAL_FB", label: "Total fund balances", accountType: AccountType.EQUITY },
-  { code: "TOTAL_LIABS_FB", label: "Total liabilities and fund balances", accountType: AccountType.EQUITY },
+  { label: "Fund balances", accountType: AccountType.EQUITY },
+  { label: "Total fund balances", accountType: AccountType.EQUITY },
+  { label: "Total liabilities and fund balances", accountType: AccountType.EQUITY },
 ];
 
-const GOV_IS_DEFAULT_LINES: Array<{ code: string; label: string; accountType: AccountType }> = [
-  { code: "REVENUES", label: "Revenues", accountType: AccountType.REVENUE },
-  { code: "TAXES", label: "Taxes", accountType: AccountType.REVENUE },
-  { code: "INTERGOV", label: "Intergovernmental", accountType: AccountType.REVENUE },
-  { code: "CHARGES", label: "Charges for services", accountType: AccountType.REVENUE },
-  { code: "INVEST", label: "Investment earnings", accountType: AccountType.REVENUE },
-  { code: "TOTAL_REV", label: "Total revenues", accountType: AccountType.REVENUE },
+const GOV_IS_DEFAULT_LINES: Array<{ label: string; accountType: AccountType }> = [
+  { label: "Revenues", accountType: AccountType.REVENUE },
+  { label: "Taxes", accountType: AccountType.REVENUE },
+  { label: "Intergovernmental", accountType: AccountType.REVENUE },
+  { label: "Charges for services", accountType: AccountType.REVENUE },
+  { label: "Investment earnings", accountType: AccountType.REVENUE },
+  { label: "Total revenues", accountType: AccountType.REVENUE },
 
-  { code: "EXP", label: "Expenditures", accountType: AccountType.EXPENSE },
-  { code: "GEN_GOV", label: "General government", accountType: AccountType.EXPENSE },
-  { code: "PUBLIC_SAFETY", label: "Public safety", accountType: AccountType.EXPENSE },
-  { code: "PUBLIC_WORKS", label: "Public works", accountType: AccountType.EXPENSE },
-  { code: "HEALTH_WELFARE", label: "Health and welfare", accountType: AccountType.EXPENSE },
-  { code: "TOTAL_EXP", label: "Total expenditures", accountType: AccountType.EXPENSE },
+  { label: "Expenditures", accountType: AccountType.EXPENSE },
+  { label: "General government", accountType: AccountType.EXPENSE },
+  { label: "Public safety", accountType: AccountType.EXPENSE },
+  { label: "Public works", accountType: AccountType.EXPENSE },
+  { label: "Health and welfare", accountType: AccountType.EXPENSE },
+  { label: "Total expenditures", accountType: AccountType.EXPENSE },
 
-  { code: "EXCESS", label: "Excess (deficiency) of revenues over expenditures", accountType: AccountType.EQUITY },
-  { code: "OTHER_FIN", label: "Other financing sources (uses)", accountType: AccountType.EQUITY },
-  { code: "NET_CHANGE", label: "Net change in fund balances", accountType: AccountType.EQUITY },
-  { code: "FB_BEGIN", label: "Fund balances, beginning of year", accountType: AccountType.EQUITY },
-  { code: "FB_END", label: "Fund balances, end of year", accountType: AccountType.EQUITY },
+  { label: "Excess (deficiency) of revenues over expenditures", accountType: AccountType.EQUITY },
+  { label: "Other financing sources (uses)", accountType: AccountType.EQUITY },
+  { label: "Net change in fund balances", accountType: AccountType.EQUITY },
+  { label: "Fund balances, beginning of year", accountType: AccountType.EQUITY },
+  { label: "Fund balances, end of year", accountType: AccountType.EQUITY },
 ];
 
 async function ensureTemplate(
   engagementId: string,
   statement: StatementType,
   name: string,
-  lines: Array<{ code: string; label: string; accountType: AccountType }>
+  lines: Array<{ label: string; accountType: AccountType }>
 ) {
   const existing = await db.statementTemplate.findFirst({
     where: { engagementId, statement },
@@ -76,7 +76,6 @@ async function ensureTemplate(
       name,
       lineItems: {
         create: lines.map((l, idx) => ({
-          code: l.code,
           label: l.label,
           accountType: l.accountType,
           sortOrder: idx + 1,
@@ -150,7 +149,6 @@ export async function getGovernmentalStatementOverview(engagementId: string) {
 const UpsertLineItem = z.object({
   engagementId: z.string().min(1),
   templateId: z.string().min(1),
-  code: z.string().min(1),
   label: z.string().min(1),
   accountType: z.nativeEnum(AccountType),
   sortOrder: z.number().int().positive().optional(),
@@ -162,7 +160,9 @@ export async function upsertStatementLineItem(payload: z.infer<typeof UpsertLine
   await assertEngagement(org.id, v.engagementId);
 
   const existing = await db.statementLineItem.findFirst({
-    where: { templateId: v.templateId, code: v.code },
+    // There is no separate "code" column in the DB.
+    // For now, treat (templateId, label) as the stable identifier.
+    where: { templateId: v.templateId, label: v.label },
     select: { id: true },
   });
 
@@ -179,7 +179,6 @@ export async function upsertStatementLineItem(payload: z.infer<typeof UpsertLine
     await db.statementLineItem.create({
       data: {
         templateId: v.templateId,
-        code: v.code,
         label: v.label,
         accountType: v.accountType,
         sortOrder: v.sortOrder ?? 999,
