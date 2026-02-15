@@ -7,19 +7,103 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ──────────────────────────────────────
+// AUTH (NextAuth.js / Auth.js)
+// ──────────────────────────────────────
+
+model User {
+  id             String    @id @default(cuid())
+  name           String?
+  email          String    @unique
+  hashedPassword String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  sessions    Session[]
+  accounts    Account[]
+
+  // Link to organizations via membership
+  memberships OrgMembership[]
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ──────────────────────────────────────
+// MULTI-TENANCY
+// ──────────────────────────────────────
+
+model Organization {
+  id         String          @id @default(cuid())
+  name       String
+  createdAt  DateTime        @default(now())
+
+  memberships  OrgMembership[]
+  engagements  Engagement[]
+}
+
+enum OrgRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+model OrgMembership {
+  id             String   @id @default(cuid())
+  userId         String
+  organizationId String
+  role           OrgRole  @default(MEMBER)
+  createdAt      DateTime @default(now())
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+}
+
+// ──────────────────────────────────────
+// ENGAGEMENTS
+// ──────────────────────────────────────
+
 enum FundType {
   GOVERNMENTAL
   PROPRIETARY
   FIDUCIARY
   COMPONENT_UNIT_BLENDED
   COMPONENT_UNIT_DISCRETE
-}
-
-model Organization {
-  id         String       @id @default(cuid())
-  name       String
-  createdAt  DateTime     @default(now())
-  engagements Engagement[]
 }
 
 model Engagement {
@@ -34,7 +118,6 @@ model Engagement {
   fundRules     FundDetectionRule[]
   funds         Fund[]
 
-  // Financial statement templates + assignments (built from TB)
   statementTemplates   StatementTemplate[]
   statementAssignments StatementLineAssignment[]
 
@@ -50,7 +133,6 @@ model TrialBalanceImport {
   rowCount     Int      @default(0)
   totalBalance Decimal  @default(0) @db.Decimal(18,2)
 
-  // NEW: supports CSV/XLSX and headerless/manual mapping
   fileType   String?
   hasHeaders Boolean @default(true)
   rawMatrix  Json?
@@ -59,7 +141,6 @@ model TrialBalanceImport {
   engagement Engagement        @relation(fields: [engagementId], references: [id])
   lines      TrialBalanceLine[]
 
-  // Financial statement assignments tied to this import
   statementAssignments StatementLineAssignment[]
 
   @@index([engagementId])
@@ -71,13 +152,12 @@ model TrialBalanceLine {
   account       String
   description   String?
   finalBalance  Decimal  @db.Decimal(18,2)
-  // These fields are the *current* grouping used by the app (can be edited by the user).
+
   auditGroup    String?
   auditSubgroup String?
   fundCode      String?
   fundType      FundType?
 
-  // These fields preserve what was uploaded (read-only reference for the user).
   originalAuditGroup    String?
   originalAuditSubgroup String?
   originalFundCode      String?
@@ -91,6 +171,10 @@ model TrialBalanceLine {
   @@index([account])
   @@index([fundCode])
 }
+
+// ──────────────────────────────────────
+// STATEMENTS
+// ──────────────────────────────────────
 
 enum StatementType {
   GOVERNMENTAL_FUNDS_BS
@@ -134,8 +218,6 @@ model StatementLineItem {
   @@index([templateId])
 }
 
-// Assigns Trial Balance Lines to a specific statement line item.
-// This is the "financial statement grouping" and can differ from uploaded (original) groupings.
 model StatementLineAssignment {
   id           String   @id @default(cuid())
   engagementId String
@@ -155,6 +237,10 @@ model StatementLineAssignment {
   @@index([fundCode])
   @@unique([importId, tbLineId])
 }
+
+// ──────────────────────────────────────
+// FUNDS
+// ──────────────────────────────────────
 
 model Fund {
   id           String   @id @default(cuid())
