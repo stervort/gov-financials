@@ -64,16 +64,89 @@ model TrialBalanceLine {
   account       String
   description   String?
   finalBalance  Decimal  @db.Decimal(18,2)
+  // These fields are the *current* grouping used by the app (can be edited by the user).
   auditGroup    String?
   auditSubgroup String?
   fundCode      String?
   fundType      FundType?
 
+  // These fields preserve what was uploaded (read-only reference for the user).
+  originalAuditGroup    String?
+  originalAuditSubgroup String?
+  originalFundCode      String?
+  originalFundType      FundType?
+
   import TrialBalanceImport @relation(fields: [importId], references: [id])
+
+  statementAssignments StatementLineAssignment[]
 
   @@index([importId])
   @@index([account])
   @@index([fundCode])
+}
+
+enum StatementType {
+  GOVERNMENTAL_FUNDS_BS
+  GOVERNMENTAL_FUNDS_IS
+}
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  EXPENSE
+  OTHER
+}
+
+model StatementTemplate {
+  id           String        @id @default(cuid())
+  engagementId String
+  statement    StatementType
+  name         String
+  isDefault    Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+
+  engagement Engagement @relation(fields: [engagementId], references: [id])
+  lineItems  StatementLineItem[]
+
+  @@index([engagementId])
+  @@index([statement])
+}
+
+model StatementLineItem {
+  id          String       @id @default(cuid())
+  templateId  String
+  sortOrder   Int
+  label       String
+  accountType AccountType @default(OTHER)
+
+  template StatementTemplate @relation(fields: [templateId], references: [id])
+  assignments StatementLineAssignment[]
+
+  @@index([templateId])
+}
+
+// Assigns Trial Balance Lines to a specific statement line item.
+// This is the "financial statement grouping" and can differ from uploaded (original) groupings.
+model StatementLineAssignment {
+  id           String   @id @default(cuid())
+  engagementId String
+  importId     String
+  tbLineId     String
+  lineItemId   String
+  fundCode     String?
+  createdAt    DateTime @default(now())
+
+  tbLine      TrialBalanceLine    @relation(fields: [tbLineId], references: [id])
+  lineItem    StatementLineItem   @relation(fields: [lineItemId], references: [id])
+  engagement  Engagement          @relation(fields: [engagementId], references: [id])
+  import      TrialBalanceImport  @relation(fields: [importId], references: [id])
+
+  @@index([engagementId])
+  @@index([importId])
+  @@index([fundCode])
+  @@unique([importId, tbLineId])
 }
 
 model Fund {

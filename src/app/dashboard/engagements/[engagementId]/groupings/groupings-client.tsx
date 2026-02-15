@@ -14,6 +14,9 @@ type Line = {
   auditGroup: string | null;
   auditSubgroup: string | null;
   fundCode: string | null;
+  originalAuditGroup: string | null;
+  originalAuditSubgroup: string | null;
+  originalFundCode: string | null;
 };
 
 export default function GroupingsClient(props: {
@@ -30,6 +33,7 @@ export default function GroupingsClient(props: {
   const router = useRouter();
   const [isEditing, setIsEditing] = useState(false);
   const [isPending, startTransition] = useTransition();
+  const [showOriginal, setShowOriginal] = useState(false);
 
   // local editable buffer
   const [draft, setDraft] = useState<Record<string, { auditGroup: string; auditSubgroup: string }>>(
@@ -133,6 +137,15 @@ export default function GroupingsClient(props: {
               </Button>
             </>
           )}
+
+          <label className="ml-3 flex items-center gap-2 text-sm text-gray-600 select-none">
+            <input
+              type="checkbox"
+              checked={showOriginal}
+              onChange={(e) => setShowOriginal(e.target.checked)}
+            />
+            Show original upload columns
+          </label>
         </div>
       </div>
 
@@ -144,8 +157,11 @@ export default function GroupingsClient(props: {
               <th className="px-3 py-2">Account</th>
               <th className="px-3 py-2">Description</th>
               <th className="px-3 py-2">Fund</th>
+              {showOriginal ? <th className="px-3 py-2">Orig Fund</th> : null}
               <th className="px-3 py-2">Group</th>
+              {showOriginal ? <th className="px-3 py-2">Orig Group</th> : null}
               <th className="px-3 py-2">Subgroup</th>
+              {showOriginal ? <th className="px-3 py-2">Orig Subgroup</th> : null}
               <th className="px-3 py-2 text-right">Amount</th>
             </tr>
           </thead>
@@ -158,11 +174,17 @@ export default function GroupingsClient(props: {
                 ? `${l.fundCode}${fund?.name ? ` - ${fund.name}` : ""}`
                 : "";
 
+              const origFund = l.originalFundCode ? props.fundsByCode[l.originalFundCode] : null;
+              const origFundLabel = l.originalFundCode
+                ? `${l.originalFundCode}${origFund?.name ? ` - ${origFund.name}` : ""}`
+                : "";
+
               return (
                 <tr key={l.id} className={`border-t ${ungrouped ? "bg-red-50" : ""}`}>
                   <td className="px-3 py-2 font-mono">{l.account}</td>
                   <td className="px-3 py-2">{l.description ?? ""}</td>
                   <td className="px-3 py-2">{fundLabel}</td>
+                  {showOriginal ? <td className="px-3 py-2 text-gray-600">{origFundLabel}</td> : null}
 
                   <td className="px-3 py-2">
                     <Input
@@ -178,6 +200,10 @@ export default function GroupingsClient(props: {
                     />
                   </td>
 
+                  {showOriginal ? (
+                    <td className="px-3 py-2 text-gray-600">{l.originalAuditGroup ?? ""}</td>
+                  ) : null}
+
                   <td className="px-3 py-2">
                     <Input
                       value={d.auditSubgroup}
@@ -191,6 +217,10 @@ export default function GroupingsClient(props: {
                       }
                     />
                   </td>
+
+                  {showOriginal ? (
+                    <td className="px-3 py-2 text-gray-600">{l.originalAuditSubgroup ?? ""}</td>
+                  ) : null}
 
                   <td className="px-3 py-2 text-right font-mono">
                     {Number(l.finalBalance ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}

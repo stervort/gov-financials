@@ -46,6 +46,9 @@ export type GroupingLineRow = {
   auditGroup: string | null;
   auditSubgroup: string | null;
   fundCode: string | null;
+  originalAuditGroup: string | null;
+  originalAuditSubgroup: string | null;
+  originalFundCode: string | null;
 };
 
 export type GroupingLinesResult = {
@@ -136,6 +139,9 @@ export async function listGroupingLines(
         auditGroup: true,
         auditSubgroup: true,
         fundCode: true,
+        originalAuditGroup: true,
+        originalAuditSubgroup: true,
+        originalFundCode: true,
       },
     }),
   ]);
@@ -149,6 +155,9 @@ export async function listGroupingLines(
     auditGroup: l.auditGroup ?? null,
     auditSubgroup: l.auditSubgroup ?? null,
     fundCode: l.fundCode ?? null,
+    originalAuditGroup: l.originalAuditGroup ?? null,
+    originalAuditSubgroup: l.originalAuditSubgroup ?? null,
+    originalFundCode: l.originalFundCode ?? null,
   }));
 
   return {

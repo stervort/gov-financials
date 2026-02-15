@@ -155,9 +155,15 @@ export async function finalizeTBMapping(formData: FormData) {
         account: r.account,
         description: r.description,
         finalBalance: r.finalBalance,
+        // current (editable)
         auditGroup: r.auditGroup,
         auditSubgroup: r.auditSubgroup,
         fundCode: (r as any).fundCode ?? null,
+
+        // preserve what was uploaded
+        originalAuditGroup: r.auditGroup,
+        originalAuditSubgroup: r.auditSubgroup,
+        originalFundCode: (r as any).fundCode ?? null,
       })),
     });
 
